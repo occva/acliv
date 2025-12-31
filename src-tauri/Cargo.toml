@@ -1,0 +1,37 @@
+[package]
+name = "ai-cli-history-viewer"
+version = "0.1.0"
+description = "AI CLI History Viewer - High Performance Desktop App"
+authors = ["Your Name"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri Core
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-log = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+
+# Data Processing
+walkdir = "2.5"
+rayon = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Utilities
+dirs = "5.0"
+regex = "1.11"
