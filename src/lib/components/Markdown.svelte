@@ -24,10 +24,21 @@
     renderer: {
       code(code: string, lang: string | undefined) {
         const text = (code || '').trim();
-        const language = (lang || 'plaintext').trim();
+        const language = (lang || '').trim();
+
+        const normalizedLang = language.toLowerCase();
+        // Rule:
+        // - Any known programming language is rendered as code block
+        // - Except html/css (render as plain text)
+        // - Unknown/no-lang also render as plain text
+        const isBlockedLang = normalizedLang === 'html' || normalizedLang === 'css';
+        const isKnownLang = !!normalizedLang && hljs.getLanguage(normalizedLang);
+        if (!isKnownLang || isBlockedLang) {
+          return `<div>${escapeHtml(text).replace(/\n/g, '<br>')}</div>`;
+        }
         
         let highlighted = '';
-        const validLanguage = hljs.getLanguage(language) ? language : 'plaintext';
+        const validLanguage = normalizedLang;
         
         try {
           if (text) {
@@ -57,7 +68,7 @@
           </div>
         `;
       },
-      link(href: string, title: string | null, text: string) {
+      link(href: string, title: string | null | undefined, text: string) {
         return `<a href="${href}" title="${title || ''}" target="_blank" rel="noopener noreferrer">${text}</a>`;
       }
     },
@@ -72,7 +83,10 @@
         const sanitizedInput = content
           .replace(/\r\n/g, '\n')
           .replace(/\r/g, '\n')
-          .replace(/\u200B/g, '');
+          .replace(/\u200B/g, '')
+          // Normalize copied terminal line-number prefixes like "     12→"
+          // so Markdown doesn't treat them as 4-space-indented code blocks.
+          .replace(/^\s+(\d+\s*[→-]>?)/gm, '$1');
           
         const rawHtml = markedInstance.parse(sanitizedInput) as string;
         // Purify output to prevent XSS

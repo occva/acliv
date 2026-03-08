@@ -12,6 +12,7 @@
     calendar: `<path d="M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25V3.75C0 2.784.784 2 1.75 2H3V.75A.75.75 0 0 1 3.75 0h1ZM1.5 3.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V3.75a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Z"/><path d="M4 7h2v2H4V7zm4 0h2v2H8V7z"/>`,
     search: `<path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>`,
     empty_box: `<path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75C0 1.784.784 1 1.75 1ZM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/>`,
+    back: `<svg viewBox="0 0 1024 1024" width="14" height="14" fill="currentColor"><path d="M604.8 407.68H158.72L375.68 198.4c17.92-17.28 17.92-46.08 0-63.36a48.384 48.384 0 0 0-65.92 0L13.44 421.12c-17.92 17.28-17.92 46.08 0 63.36l296.32 286.08c17.92 17.28 47.36 17.28 65.92 0 17.92-17.28 17.92-46.08 0-63.36L158.72 497.92h446.08c179.84 0 325.76 140.8 325.76 314.88v44.8c0 24.96 21.12 44.8 46.72 44.8 25.6 0 46.72-20.48 46.72-44.8v-44.8c0-224-187.52-405.12-419.2-405.12z"></path></svg>`,
     dropdown_arrow: `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M12.78 6.22a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 7.28a.75.75 0 0 1 1.06-1.06L8 9.94l3.72-3.72a.75.75 0 0 1 1.06 0Z"></path></svg>`
   };
 
@@ -19,23 +20,115 @@
     return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="currentColor">${ICONS[name]}</svg>`;
   }
 
+  // ---- 本地类型（与旧 api.ts 同构，模板字段名不变）----
+  interface SessionMeta {
+    providerId: string; sessionId: string; title?: string; summary?: string;
+    projectDir?: string | null; lastActiveAt?: number; sourcePath?: string; resumeCommand?: string;
+  }
+  interface ProjectInfo { name: string; conversation_count: number; latest_date: string; }
+  interface ConvSummary {
+    session_id: string; project_path: string; source_type: string;
+    title: string; timestamp: string; message_count: number; date: string;
+  }
+  interface Stats { projects_count: number; conversations_count: number; messages_count: number; }
+  interface SearchResultLocal { project: string; source_type: string; session_id: string; title: string; date: string; }
+  interface ConversationLike {
+      session_id: string;
+      project_path: string;
+      source_type: string;
+      title: string;
+      timestamp: string;
+      messages: Array<{ role: string; content: string; timestamp: string }>;
+  }
+
+  // ---- 适配函数 ----
+  const GEMINI_GROUP = 'Gemini Sessions';
+  const PROVIDER_GROUPS: Record<string, string> = {
+    gemini: GEMINI_GROUP,
+    codex: 'Codex Sessions',
+    openclaw: 'OpenClaw Sessions',
+    opencode: 'OpenCode Sessions',
+    claude: 'Claude Sessions',
+  };
+
+  function msToDate(ms?: number): string {
+    return ms ? new Date(ms).toLocaleDateString() : 'N/A';
+  }
+  function sessionTitle(s: SessionMeta): string {
+    return s.title ?? s.summary ?? s.sessionId.slice(0, 8);
+  }
+  function sessionDir(s: SessionMeta): string {
+    if (s.projectDir && s.projectDir.trim()) return s.projectDir;
+    return PROVIDER_GROUPS[s.providerId] ?? 'Unknown';
+  }
+  function sessionCacheKey(s: SessionMeta): string {
+    return `${s.providerId}:${s.sourcePath ?? s.sessionId}`;
+  }
+  function sessionMessageCount(s: SessionMeta): number {
+    return messageCountCache[sessionCacheKey(s)] ?? 0;
+  }
+
+  // SessionMeta[] → ProjectInfo[]（按 source 过滤 + 按 projectDir 分组）
+  function buildProjects(sessions: SessionMeta[], source: string): ProjectInfo[] {
+    const map = new Map<string, { count: number; latest: number }>();
+    sessions
+      .filter(s => s.providerId === source)
+      .forEach(s => {
+        const dir = sessionDir(s);
+        const e = map.get(dir) ?? { count: 0, latest: 0 };
+        e.count++;
+        if (s.lastActiveAt && s.lastActiveAt > e.latest) e.latest = s.lastActiveAt;
+        map.set(dir, e);
+      });
+    return [...map.entries()].map(([name, { count, latest }]) => ({
+      name, conversation_count: count, latest_date: msToDate(latest),
+    })).sort((a,b) => b.conversation_count - a.conversation_count);
+  }
+
+  // SessionMeta[] → ConvSummary[]（按 source + projectDir 过滤）
+  function buildConversations(sessions: SessionMeta[], source: string, project: string): ConvSummary[] {
+    return sessions
+      .filter(s => s.providerId === source && sessionDir(s) === project)
+      .map(s => ({
+        session_id: s.sessionId, project_path: s.projectDir ?? '',
+        source_type: s.providerId, title: sessionTitle(s),
+        timestamp: msToDate(s.lastActiveAt), message_count: sessionMessageCount(s),
+        date: msToDate(s.lastActiveAt),
+      }));
+  }
+
+  // 从 allSessions 重新计算 projects / stats（切换 source 或刷新后调用）
+  function refreshFromSessions() {
+    const projs = buildProjects(allSessions, currentSource);
+    projects = projs;
+    stats = {
+      projects_count: projs.length,
+      conversations_count: allSessions.filter(s =>
+        s.providerId === currentSource).length,
+      messages_count: allSessions
+        .filter(s => s.providerId === currentSource)
+        .reduce((sum, s) => sum + sessionMessageCount(s), 0),
+    };
+    if (!currentProject && projs.length > 0) selectProject(projs[0].name);
+  }
+
   // --- State (Svelte 5 Runes) ---
-  let projects = $state<api.ProjectInfo[]>([]);
+    let allSessions = $state<SessionMeta[]>([]);
+  let messageCountCache = $state<Record<string, number>>({});
+  let countJobToken = 0;
+  let projects = $state<ProjectInfo[]>([]);
   let currentProject = $state<string | null>(null);
-  let conversations = $state<api.ConversationSummary[]>([]);
-  let currentConversation = $state<any>(null); // TODO: Define Pair type
-  let stats = $state<api.Stats>({ 
-    source: 'claude', projects_count: 0, conversations_count: 0, messages_count: 0, 
-    conversations_loaded: 0, skipped_count: 0, load_time: 0 
-  });
+  let conversations = $state<ConvSummary[]>([]);
+  let currentConversation = $state<any>(null);
+  let stats = $state<Stats>({ projects_count: 0, conversations_count: 0, messages_count: 0 });
   let currentSource = $state(localStorage.getItem('source') || 'claude');
-  const sources = ['claude', 'codex', 'gemini'];
+  const sources = ['claude', 'codex', 'gemini', 'openclaw', 'opencode'];
 
   // UI State
   let currentView = $state('list');
   let isSearchModalOpen = $state(false);
   let searchQuery = $state('');
-  let searchResults = $state<api.SearchResult[]>([]);
+  let searchResults = $state<SearchResultLocal[]>([]);
   let isSourceDropdownOpen = $state(false);
   let theme = $state(localStorage.getItem('theme') || 'dark');
   let isLoading = $state(false);
@@ -57,21 +150,51 @@
   onDestroy(() => {
     if (autoRefreshInterval) clearInterval(autoRefreshInterval);
     if (searchTimer) clearTimeout(searchTimer);
+    countJobToken++;
     window.removeEventListener('keydown', handleGlobalKeydown);
   });
+  async function warmupMessageCounts(projectName: string) {
+    const token = ++countJobToken;
+    const targets = allSessions
+      .filter(s => s.providerId === currentSource && sessionDir(s) === projectName && !!s.sourcePath)
+      .filter(s => messageCountCache[sessionCacheKey(s)] === undefined);
+    if (!targets.length) return;
 
+    const LIMIT = 40;
+    const BATCH_SIZE = 6;
+    const subset = targets.slice(0, LIMIT);
+    for (let i = 0; i < subset.length; i += BATCH_SIZE) {
+      if (token !== countJobToken) return;
+      const batch = subset.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(batch.map(async (s) => {
+        try {
+          const list = await api.getSessionMessages(s.providerId, s.sourcePath!);
+          return { key: sessionCacheKey(s), count: list.length };
+        } catch {
+          return { key: sessionCacheKey(s), count: 0 };
+        }
+      }));
+      if (token !== countJobToken) return;
+      const next = { ...messageCountCache };
+      for (const r of results) next[r.key] = r.count;
+      messageCountCache = next;
+      refreshFromSessions();
+      if (currentProject) {
+        conversations = buildConversations(allSessions, currentSource, currentProject);
+      }
+    }
+  }
   async function loadData() {
     isLoading = true;
     try {
-        await api.reloadData(currentSource);
-        await refreshUI();
+        allSessions = await api.listSessions();
+        refreshFromSessions();
     } catch (e) {
         console.error("Failed to load data:", e);
     } finally {
         isLoading = false;
     }
   }
-
   async function silentRefresh() {
       if (isLoading || isRefreshing) return;
       isRefreshing = true;
@@ -79,16 +202,11 @@
       showToast = true;
       
       try {
-          await api.reloadData(currentSource);
-          const newStats = await api.getStats(currentSource);
-          stats = newStats;
-          
-          const projs = await api.getProjects(currentSource);
-          projects = projs;
-
+          allSessions = await api.listSessions();
+          refreshFromSessions();
           if (currentProject) {
-              const res = await api.getConversations(currentSource, currentProject);
-              conversations = res || [];
+              conversations = buildConversations(allSessions, currentSource, currentProject);
+              void warmupMessageCounts(currentProject);
           }
           
           toastType = 'success';
@@ -102,94 +220,88 @@
           isRefreshing = false;
       }
   }
-
-  async function refreshUI() {
-    stats = await api.getStats(currentSource);
-    projects = await api.getProjects(currentSource);
-    
-    if (!currentProject && projects.length > 0) {
-        selectProject(projects[0].name);
-    }
-  }
-
-  async function selectProject(name: string) {
+  function selectProject(name: string) {
     currentProject = name;
-    const res = await api.getConversations(currentSource, name);
-    conversations = res || [];
+    conversations = buildConversations(allSessions, currentSource, name);
     currentView = 'list';
+    void warmupMessageCounts(name);
   }
 
   interface MessagePair {
       user?: string;
       assistant?: string;
   }
+  function mergeMessageContent(current: string, next: string) {
+      if (!current) return next;
+      if (!next) return current;
+      const needsSingleNewline = current.endsWith('\n') || next.startsWith('\n');
+      return `${current}${needsSingleNewline ? '\n' : '\n\n'}${next}`;
+  }
 
-  function transformConversation(conv: api.Conversation | null) {
+  function transformConversation(conv: ConversationLike | null) {
       if (!conv) return null;
       const messages = conv.messages || [];
       const pairs: MessagePair[] = [];
-      
+
       let i = 0;
       while (i < messages.length) {
           const msg = messages[i];
           const role = (msg.role || '').toLowerCase();
-          
+
           if (role === 'user' || role === 'human') {
               let userContent = msg.content || '';
-              // 合并连续的 user 消息
-              while (i + 1 < messages.length && 
+              while (i + 1 < messages.length &&
                      (messages[i+1].role.toLowerCase() === 'user' || messages[i+1].role.toLowerCase() === 'human')) {
                   const nextContent = messages[i+1].content || '';
-                  if (userContent.trim().endsWith('```') && nextContent.trim().startsWith('```')) {
-                      userContent = userContent.trim().slice(0, -3) + '\n' + nextContent.trim().slice(3);
-                  } else {
-                      userContent += '\n' + nextContent;
-                  }
+                  userContent = mergeMessageContent(userContent, nextContent);
                   i++;
               }
-              
               let assistantContent = '';
               if (i + 1 < messages.length && messages[i+1].role.toLowerCase() === 'assistant') {
                   assistantContent = messages[i+1].content || '';
                   i++;
                   while (i + 1 < messages.length && messages[i+1].role.toLowerCase() === 'assistant') {
                       const nextContent = messages[i+1].content || '';
-                      const trimmedPrev = assistantContent.trim();
-                      const trimmedNext = nextContent.trim();
-                      
-                      if (trimmedPrev.endsWith('```') && trimmedNext.startsWith('```')) {
-                          assistantContent = trimmedPrev.slice(0, -3) + '\n' + trimmedNext.slice(3);
-                      } else {
-                          assistantContent += '\n' + nextContent;
-                      }
+                      assistantContent = mergeMessageContent(assistantContent, nextContent);
                       i++;
                   }
               }
-              
               pairs.push({ user: userContent, assistant: assistantContent });
           } else if (role === 'assistant') {
               let assistantContent = msg.content || '';
               while (i + 1 < messages.length && messages[i+1].role.toLowerCase() === 'assistant') {
                   const nextContent = messages[i+1].content || '';
-                  if (assistantContent.trim().endsWith('```') && nextContent.trim().startsWith('```')) {
-                      assistantContent = assistantContent.trim().slice(0, -3) + '\n' + nextContent.trim().slice(3);
-                  } else {
-                      assistantContent += '\n' + nextContent;
-                  }
+                  assistantContent = mergeMessageContent(assistantContent, nextContent);
                   i++;
               }
               pairs.push({ assistant: assistantContent });
           }
           i++;
       }
-      
       return { ...conv, pairs };
   }
-
-  async function selectConversation(sessionId: string) {
+  async function selectConversation(sessionId: string, sourceType?: string) {
       if (!currentProject) return;
-      const conv = await api.getConversationDetail(currentSource, currentProject, sessionId);
-      currentConversation = transformConversation(conv);
+      const target = allSessions.find(s => s.sessionId === sessionId && (!sourceType || s.providerId === sourceType));
+      if (!target) return;
+      const rawMsgs = target.sourcePath
+        ? await api.getSessionMessages(target.providerId, target.sourcePath)
+        : [];
+      messageCountCache = {
+        ...messageCountCache,
+        [sessionCacheKey(target)]: rawMsgs.length,
+      };
+      const convLike = {
+        session_id: target.sessionId,
+        project_path: target.projectDir ?? '',
+        source_type: target.providerId,
+        title: sessionTitle(target),
+        timestamp: msToDate(target.lastActiveAt),
+        messages: rawMsgs.map(m => ({
+          role: m.role, content: m.content, timestamp: msToDate(m.ts),
+        })),
+      };
+      currentConversation = transformConversation(convLike as any);
       currentView = 'detail';
   }
 
@@ -202,7 +314,6 @@
   function toggleTheme() {
       setTheme(theme === 'dark' ? 'light' : 'dark');
   }
-
   function selectSource(source: string) {
       if (currentSource === source) {
           isSourceDropdownOpen = false;
@@ -213,19 +324,26 @@
       isSourceDropdownOpen = false;
       currentProject = null;
       currentConversation = null;
-      loadData();
+      refreshFromSessions();
   }
-
   async function handleSearchInput() {
       if (!searchQuery) {
           searchResults = [];
           return;
       }
-      if (searchTimer) clearTimeout(searchTimer);
-      searchTimer = setTimeout(async () => {
-          const res = await api.search(currentSource, searchQuery);
-          searchResults = res || [];
-      }, 300);
+      const needle = searchQuery.toLowerCase();
+      searchResults = allSessions
+        .filter(s => s.providerId === currentSource
+          && [s.sessionId, s.title, s.summary, s.projectDir]
+               .some(f => f?.toLowerCase().includes(needle)))
+        .map(s => ({
+          project: sessionDir(s),
+          source_type: s.providerId,
+          session_id: s.sessionId,
+          title: sessionTitle(s),
+          date: msToDate(s.lastActiveAt),
+        }))
+        .slice(0, 50) as any;
   }
 
   function openSearch() {
@@ -239,16 +357,12 @@
       searchResults = [];
   }
 
-  function handleSearchResultClick(result: api.SearchResult) {
+  function handleSearchResultClick(result: any) {
       closeSearch();
       if (currentProject !== result.project) {
           currentProject = result.project;
       }
-      api.getConversationDetail(currentSource, result.project, result.session_id)
-        .then((conv) => {
-            currentConversation = transformConversation(conv);
-            currentView = 'detail';
-        });
+      selectConversation(result.session_id, result.source_type);
   }
 
   function handleModalBackdropClick(e: MouseEvent) {
@@ -258,7 +372,7 @@
   }
 
   function handleGlobalKeydown(e: KeyboardEvent) {
-      // 正在输入时禁用某些热键
+      // Disable global hotkeys while user is typing.
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
           if (e.key === 'Escape' && isSearchModalOpen) closeSearch();
           return;
@@ -300,7 +414,9 @@
   const sourceLabel = $derived(({
       'claude': 'Claude CLI',
       'codex': 'Codex CLI',
-      'gemini': 'Gemini CLI'
+      'gemini': 'Gemini CLI',
+      'openclaw': 'OpenClaw',
+      'opencode': 'OpenCode'
   } as Record<string, string>)[currentSource] || 'History');
 
 </script>
@@ -317,7 +433,7 @@
         <div class="source-dropdown" class:show={isSourceDropdownOpen}>
             {#each sources as src}
                 <button class="source-item" class:selected={currentSource === src} onclick={() => selectSource(src)} type="button">
-                    {src === 'claude' ? 'Claude CLI' : src === 'codex' ? 'Codex CLI' : 'Gemini CLI'}
+                    {src === 'claude' ? 'Claude CLI' : src === 'codex' ? 'Codex CLI' : src === 'gemini' ? 'Gemini CLI' : src === 'openclaw' ? 'OpenClaw' : 'OpenCode'}
                 </button>
             {/each}
         </div>
@@ -375,7 +491,7 @@
                </div>
             {:else}
                {#each conversations as conv}
-                   <button class="conversation-item" onclick={() => selectConversation(conv.session_id)} type="button">
+                   <button class="conversation-item" onclick={() => selectConversation(conv.session_id, conv.source_type)} type="button">
                        <div class="conversation-title">{conv.title}</div>
                        <div class="conversation-meta">
                            <span class="meta-item">{@html getIcon('conversation', 12)} {conv.message_count} messages</span>
@@ -390,7 +506,7 @@
      <div class="view" class:active={currentView === 'detail'} id="detailView">
         <div class="view-header">
              <button class="btn-secondary" id="backBtn" onclick={() => currentView = 'list'} type="button">
-                 ← Back
+                 {@html ICONS.back} Back
              </button>
              <h2>{currentConversation?.title || 'Conversation'}</h2>
         </div>
@@ -453,8 +569,8 @@
        onclick={handleModalBackdropClick}
        onkeydown={(e) => e.key === 'Escape' && closeSearch()}>
       <div class="search-container">
-           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <div class="search-input-wrapper" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+           <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_static_element_interactions -->
+          <div class="search-input-wrapper" role="button" tabindex="0" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
               {@html getIcon('search', 16)}
               <input type="text" id="searchInput" placeholder="Search conversations..." 
                      bind:value={searchQuery} 
@@ -479,3 +595,4 @@
 <style>
   /* All styles come from public/css/style.css */
 </style>
+

@@ -1,120 +1,50 @@
-/**
- * Tauri API 封装 - 与 Rust 后端通信
- */
+// src/lib/api.ts
 import { invoke } from '@tauri-apps/api/core';
 
 // ==================== 类型定义 ====================
 
-export interface Stats {
-    source: string;
-    projects_count: number;
-    conversations_count: number;
-    messages_count: number;
-    conversations_loaded: number;
-    skipped_count: number;
-    load_time: number;
-    error?: string;
+/** 会话元信息（来自 Rust SessionMeta） */
+export interface SessionMeta {
+    providerId: string;       // 'claude' | 'codex' | 'gemini' | 'openclaw' | 'opencode'
+    sessionId: string;
+    title?: string;           // 提取自第一条用户消息
+    summary?: string;         // 截断后的摘要
+    projectDir?: string | null; // Gemini 为 null（目录哈希不可逆）
+    createdAt?: number;       // 毫秒时间戳
+    lastActiveAt?: number;    // 毫秒时间戳
+    sourcePath?: string;      // 源文件路径，用于加载消息详情
+    resumeCommand?: string;   // 恢复会话的 CLI 命令
 }
 
-export interface ProjectInfo {
-    name: string;
-    conversation_count: number;
-    latest_date: string;
-}
-
-export interface ConversationSummary {
-    session_id: string;
-    project_path: string;
-    source_type: string;
-    title: string;
-    timestamp: string;
-    message_count: number;
-    date: string;
-}
-
-export interface Message {
-    role: string;
+/** 会话消息 */
+export interface SessionMessage {
+    role: string;    // 'user' | 'assistant' | 'tool' | 'system'
     content: string;
-    timestamp: string;
-}
-
-export interface Conversation {
-    session_id: string;
-    project_path: string;
-    source_type: string;
-    messages: Message[];
-    title: string;
-    timestamp: string;
-}
-
-export interface SearchResult {
-    project: string;
-    session_id: string;
-    title: string;
-    date: string;
-}
-
-export interface ReloadResponse {
-    success: boolean;
-    source: string;
-    load_time: number;
-    projects_count: number;
-    conversations_count: number;
-    messages_count: number;
-    skipped_count: number;
+    ts?: number;     // 毫秒时间戳（可选）
 }
 
 // ==================== API 函数 ====================
 
-/**
- * 获取统计信息
- */
-export async function getStats(source: string = 'claude'): Promise<Stats> {
-    return invoke('get_stats', { source });
+/** 扫描并获取所有会话列表（已按 lastActiveAt 降序排列） */
+export async function listSessions(): Promise<SessionMeta[]> {
+    return invoke('list_sessions');
+}
+
+/** 获取指定会话的消息列表 */
+export async function getSessionMessages(
+    providerId: string,
+    sourcePath: string,
+): Promise<SessionMessage[]> {
+    return invoke('get_session_messages', { providerId, sourcePath });
 }
 
 /**
- * 获取项目列表
+ * 在终端执行恢复命令（仅 Windows）
+ * 非 Windows 会抛出错误，前端应降级为复制到剪贴板
  */
-export async function getProjects(source: string = 'claude'): Promise<ProjectInfo[]> {
-    return invoke('get_projects', { source });
-}
-
-/**
- * 获取项目的对话列表
- */
-export async function getConversations(source: string, project: string): Promise<ConversationSummary[]> {
-    return invoke('get_conversations', { source, project });
-}
-
-/**
- * 获取对话详情
- */
-export async function getConversationDetail(
-    source: string,
-    project: string,
-    sessionId: string
-): Promise<Conversation | null> {
-    return invoke('get_conversation_detail', { source, project, sessionId });
-}
-
-/**
- * 搜索对话
- */
-export async function search(source: string, query: string): Promise<SearchResult[]> {
-    return invoke('search', { source, query });
-}
-
-/**
- * 重新加载数据
- */
-export async function reloadData(source: string = 'claude'): Promise<ReloadResponse> {
-    return invoke('reload_data', { source });
-}
-
-/**
- * 获取所有数据源列表
- */
-export async function listSources(): Promise<string[]> {
-    return invoke('list_sources');
+export async function launchTerminal(
+    command: string,
+    cwd?: string | null,
+): Promise<boolean> {
+    return invoke('launch_session_terminal', { command, cwd });
 }
