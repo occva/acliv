@@ -23,6 +23,12 @@ export interface SessionMessage {
     ts?: number;     // 毫秒时间戳（可选）
 }
 
+export interface DeleteSessionOptions {
+    providerId: string;
+    sessionId: string;
+    sourcePath: string;
+}
+
 // ==================== API 函数 ====================
 
 /** 扫描并获取所有会话列表（已按 lastActiveAt 降序排列） */
@@ -36,6 +42,14 @@ export async function getSessionMessages(
     sourcePath: string,
 ): Promise<SessionMessage[]> {
     return invoke('get_session_messages', { providerId, sourcePath });
+}
+
+/** 删除指定会话及 provider 关联资源 */
+export async function deleteSession(
+    options: DeleteSessionOptions,
+): Promise<boolean> {
+    const { providerId, sessionId, sourcePath } = options;
+    return invoke('delete_session', { providerId, sessionId, sourcePath });
 }
 
 /**

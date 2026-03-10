@@ -363,6 +363,75 @@ body {
     display: flex;
 }
 
+.confirm-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(8px);
+    z-index: 2100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.confirm-modal.active {
+    display: flex;
+}
+
+.confirm-card {
+    width: 100%;
+    max-width: 440px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    box-shadow: var(--shadow-lg);
+    padding: 24px;
+    animation: modal-slide-down 0.2s ease-out;
+}
+
+.confirm-badge {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(248, 81, 73, 0.14);
+    color: var(--accent-red);
+    margin-bottom: 16px;
+}
+
+.confirm-card h3 {
+    font-size: 22px;
+    margin-bottom: 10px;
+}
+
+.confirm-card p {
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.confirm-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 14px;
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-bottom: 18px;
+}
+
+.confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
 .search-container {
     width: 100%;
     max-width: 650px;
@@ -573,6 +642,13 @@ body {
     text-overflow: ellipsis;
 }
 
+.view-header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
 .view-info {
     font-size: 12px;
     color: var(--text-muted);
@@ -599,6 +675,33 @@ body {
 .btn-secondary:hover {
     background: var(--bg-hover);
     border-color: var(--border-light);
+}
+
+.btn-danger {
+    background: rgba(248, 81, 73, 0.12);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: var(--border-radius);
+    padding: 8px 16px;
+    color: var(--accent-red);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    transition: all 0.2s;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: rgba(248, 81, 73, 0.18);
+    border-color: rgba(248, 81, 73, 0.45);
+    transform: translateY(-1px);
+}
+
+.btn-danger:disabled,
+.btn-secondary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
 }
 
 /* Conversations List */
@@ -1000,6 +1103,11 @@ body {
 .refresh-content.success {
     border-color: var(--accent-green);
     color: var(--accent-green);
+}
+
+.refresh-content.error {
+    border-color: var(--accent-red);
+    color: var(--accent-red);
 }
 
 .refresh-content.syncing {
