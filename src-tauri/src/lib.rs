@@ -28,6 +28,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_sessions,
             get_session_messages,
+            delete_session,
             launch_session_terminal,
         ])
         .run(tauri::generate_context!())

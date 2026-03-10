@@ -68,6 +68,41 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
+pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    let meta = parse_session(path).ok_or_else(|| {
+        format!(
+            "Failed to parse Claude session metadata: {}",
+            path.display()
+        )
+    })?;
+
+    if meta.session_id != session_id {
+        return Err(format!(
+            "Claude session ID mismatch: expected {session_id}, found {}",
+            meta.session_id
+        ));
+    }
+
+    if let Some(stem) = path.file_stem() {
+        let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
+        remove_path_if_exists(&sibling).map_err(|e| {
+            format!(
+                "Failed to delete Claude session sidecar {}: {e}",
+                sibling.display()
+            )
+        })?;
+    }
+
+    std::fs::remove_file(path).map_err(|e| {
+        format!(
+            "Failed to delete Claude session file {}: {e}",
+            path.display()
+        )
+    })?;
+
+    Ok(true)
+}
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     if is_agent_session(path) {
         return None;
@@ -189,5 +224,19 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
     }
 }

@@ -29,6 +29,24 @@ pub async fn get_session_messages(
     .map_err(|e| format!("Failed to load session messages: {e}"))?
 }
 
+/// 删除指定会话及其 provider 侧关联资源
+#[tauri::command]
+pub async fn delete_session(
+    providerId: String,
+    sessionId: String,
+    sourcePath: String,
+) -> Result<bool, String> {
+    let provider_id = providerId.clone();
+    let session_id = sessionId.clone();
+    let source_path = sourcePath.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::delete_session(&provider_id, &session_id, &source_path)
+    })
+    .await
+    .map_err(|e| format!("Failed to delete session: {e}"))?
+}
+
 // ==================== Windows 终端启动 ====================
 
 /// 在 Windows 终端中执行命令（仅 Windows 平台）

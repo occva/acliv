@@ -12,7 +12,7 @@ const PROVIDER_ID: &str = "opencode";
 ///
 /// Respects `XDG_DATA_HOME` on all platforms; falls back to
 /// `~/.local/share/opencode/storage/`.
-fn get_opencode_data_dir() -> PathBuf {
+pub(crate) fn get_opencode_data_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         if !xdg.is_empty() {
             return PathBuf::from(xdg).join("opencode").join("storage");
@@ -109,6 +109,71 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         .collect();
 
     Ok(messages)
+}
+
+pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if path.file_name().and_then(|name| name.to_str()) != Some(session_id) {
+        return Err(format!(
+            "OpenCode session path does not match session ID: expected {session_id}, found {}",
+            path.display()
+        ));
+    }
+
+    let mut message_files = Vec::new();
+    collect_json_files(path, &mut message_files);
+
+    let mut message_ids = Vec::new();
+    for message_path in &message_files {
+        let data = match std::fs::read_to_string(message_path) {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if let Some(message_id) = value.get("id").and_then(Value::as_str) {
+            message_ids.push(message_id.to_string());
+        }
+    }
+
+    for message_id in &message_ids {
+        let part_dir = storage.join("part").join(message_id);
+        remove_dir_all_if_exists(&part_dir).map_err(|e| {
+            format!(
+                "Failed to delete OpenCode part directory {}: {e}",
+                part_dir.display()
+            )
+        })?;
+    }
+
+    let session_diff_path = storage
+        .join("session_diff")
+        .join(format!("{session_id}.json"));
+    remove_file_if_exists(&session_diff_path).map_err(|e| {
+        format!(
+            "Failed to delete OpenCode session diff {}: {e}",
+            session_diff_path.display()
+        )
+    })?;
+
+    remove_dir_all_if_exists(path).map_err(|e| {
+        format!(
+            "Failed to delete OpenCode message directory {}: {e}",
+            path.display()
+        )
+    })?;
+
+    if let Some(session_file) = find_session_file(storage, session_id) {
+        remove_file_if_exists(&session_file).map_err(|e| {
+            format!(
+                "Failed to delete OpenCode session file {}: {e}",
+                session_file.display()
+            )
+        })?;
+    }
+
+    Ok(true)
 }
 
 fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
@@ -272,5 +337,32 @@ fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
             files.push(path);
         }
+    }
+}
+
+fn find_session_file(storage: &Path, session_id: &str) -> Option<PathBuf> {
+    let session_root = storage.join("session");
+    let mut files = Vec::new();
+    collect_json_files(&session_root, &mut files);
+    let expected = format!("{session_id}.json");
+
+    files
+        .into_iter()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(expected.as_str()))
+}
+
+fn remove_file_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
     }
 }
