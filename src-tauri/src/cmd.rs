@@ -55,6 +55,7 @@ pub async fn delete_session(
 pub async fn launch_session_terminal(
     command: String,
     cwd: Option<String>,
+    terminalKind: Option<String>,
 ) -> Result<bool, String> {
     #[cfg(not(target_os = "windows"))]
     {
@@ -65,28 +66,117 @@ pub async fn launch_session_terminal(
     {
         use std::process::Command;
 
-        let full_command = if let Some(ref dir) = cwd {
-            // Windows: cd /d 切换驱动器和目录，然后执行命令
-            format!("cd /d \"{}\" && {}", dir, command)
-        } else {
-            command.clone()
-        };
+        match terminalKind.as_deref() {
+            Some("powershell") => {
+                let shell_command = build_powershell_prompt_script(&command);
+                let binary = resolve_powershell_binary();
+                let mut process = Command::new(binary);
+                process.args(["-NoExit", "-Command", &shell_command]);
+                apply_current_dir(&mut process, cwd.as_deref());
+                process
+                    .spawn()
+                    .map_err(|e| format!("Failed to launch {binary}: {e}"))?;
+                Ok(true)
+            }
+            Some("cmd") => {
+                let mut process = Command::new("cmd.exe");
+                process.args(["/K", &command]);
+                apply_current_dir(&mut process, cwd.as_deref());
+                process
+                    .spawn()
+                    .map_err(|e| format!("Failed to launch cmd.exe: {e}"))?;
+                Ok(true)
+            }
+            Some(other) => Err(format!("Unsupported terminal kind: {other}")),
+            None => {
+                let mut wt = Command::new("wt.exe");
+                wt.arg("new-tab");
+                if let Some(dir) = cwd.as_deref().filter(|dir| !dir.trim().is_empty()) {
+                    wt.args(["--startingDirectory", dir]);
+                }
+                let wt = wt.args(["cmd.exe", "/K", &command]).spawn();
 
-        // 优先尝试 Windows Terminal (wt.exe)
-        let wt = Command::new("wt.exe")
-            .args(["new-tab", "cmd.exe", "/k", &full_command])
-            .spawn();
+                if wt.is_ok() {
+                    return Ok(true);
+                }
 
-        if wt.is_ok() {
-            return Ok(true);
+                let mut process = Command::new("cmd.exe");
+                process.args(["/K", &command]);
+                apply_current_dir(&mut process, cwd.as_deref());
+                process
+                    .spawn()
+                    .map_err(|e| format!("Failed to launch terminal: {e}"))?;
+
+                Ok(true)
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn open_in_file_explorer(path: String) -> Result<bool, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err("File Explorer integration is only supported on Windows".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::Path;
+        use std::process::Command;
+
+        let target = Path::new(&path);
+        if !target.exists() {
+            return Err(format!("Path not found: {path}"));
         }
 
-        // 回退：cmd.exe 新窗口
-        Command::new("cmd.exe")
-            .args(["/c", "start", "cmd.exe", "/k", &full_command])
+        let mut command = Command::new("explorer.exe");
+        if target.is_file() {
+            command.arg(format!("/select,{}", target.display()));
+        } else {
+            command.arg(target);
+        }
+
+        command
             .spawn()
-            .map_err(|e| format!("Failed to launch terminal: {e}"))?;
+            .map_err(|e| format!("Failed to open File Explorer: {e}"))?;
 
         Ok(true)
     }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_current_dir(command: &mut std::process::Command, cwd: Option<&str>) {
+    if let Some(dir) = cwd.filter(|dir| !dir.trim().is_empty()) {
+        command.current_dir(dir);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_powershell_binary() -> &'static str {
+    if command_exists_on_path("pwsh.exe") {
+        "pwsh.exe"
+    } else {
+        "powershell.exe"
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn command_exists_on_path(executable: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(executable).is_file()))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn build_powershell_prompt_script(command: &str) -> String {
+    let escaped_command = command.replace('\'', "''");
+    format!(
+        "$Host.UI.RawUI.WindowTitle = 'AI CLI History Viewer - PowerShell'; \
+Write-Host ''; \
+Write-Host 'Resume command copied to clipboard.' -ForegroundColor Cyan; \
+Write-Host 'Paste and run this command:' -ForegroundColor Cyan; \
+Write-Host '{escaped_command}' -ForegroundColor Yellow; \
+Write-Host ''"
+    )
 }

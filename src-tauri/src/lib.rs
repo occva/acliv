@@ -30,6 +30,7 @@ pub fn run() {
             get_session_messages,
             delete_session,
             launch_session_terminal,
+            open_in_file_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
