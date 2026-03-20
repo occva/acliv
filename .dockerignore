@@ -1,0 +1,9 @@
+.git
+.gitignore
+node_modules
+release
+src-tauri/target
+dist
+dev_error.log
+src-tauri/build_error.log
+src-tauri/error.log

@@ -5,6 +5,13 @@
 use std::path::PathBuf;
 
 fn home_dir() -> PathBuf {
+    if let Some(override_home) = std::env::var_os("AICHV_HOME") {
+        let path = PathBuf::from(override_home);
+        if !path.as_os_str().is_empty() {
+            return path;
+        }
+    }
+
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 

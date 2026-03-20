@@ -1,10 +1,15 @@
 // src-tauri/src/lib.rs（替换全部内容）
+#[cfg(feature = "desktop")]
 mod cmd;
-mod paths;           // 新增
+#[cfg(feature = "desktop")]
+mod paths; // 新增
+#[cfg(feature = "desktop")]
 mod session_manager; // 新增
 
+#[cfg(feature = "desktop")]
 use cmd::*;
 
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
