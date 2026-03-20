@@ -11,7 +11,7 @@ default-run = "ai-cli-history-viewer"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-plugin-log"]
+desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-build"]
 web = ["dep:axum", "dep:tokio", "dep:tower-http"]
 
 [[bin]]
@@ -29,7 +29,7 @@ path = "src/bin/aichv-web.rs"
 required-features = ["web"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
 # Tauri Core
