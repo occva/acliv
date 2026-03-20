@@ -15,22 +15,37 @@ fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn resolve_tool_dir(hidden_dir_name: &str, marker_subdir: &str) -> PathBuf {
+    let home = home_dir();
+    let hidden_dir = home.join(hidden_dir_name);
+    if hidden_dir.exists() {
+        return hidden_dir;
+    }
+
+    // Support AICHV_HOME pointing directly to the tool config root (e.g. ~/.codex).
+    if home.join(marker_subdir).exists() {
+        return home;
+    }
+
+    hidden_dir
+}
+
 /// Claude Code: ~/.claude/
 pub fn get_claude_config_dir() -> PathBuf {
-    home_dir().join(".claude")
+    resolve_tool_dir(".claude", "projects")
 }
 
 /// Codex CLI: ~/.codex/
 pub fn get_codex_config_dir() -> PathBuf {
-    home_dir().join(".codex")
+    resolve_tool_dir(".codex", "sessions")
 }
 
 /// Gemini CLI: ~/.gemini/
 pub fn get_gemini_dir() -> PathBuf {
-    home_dir().join(".gemini")
+    resolve_tool_dir(".gemini", "tmp")
 }
 
 /// OpenClaw: ~/.openclaw/
 pub fn get_openclaw_dir() -> PathBuf {
-    home_dir().join(".openclaw")
+    resolve_tool_dir(".openclaw", "agents")
 }

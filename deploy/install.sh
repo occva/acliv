@@ -22,6 +22,15 @@ log_error() {
   echo "[ERROR] $*" >&2
 }
 
+has_session_data() {
+  local home_dir="$1"
+  [[ -d "$home_dir/.codex/sessions" ]] \
+    || [[ -d "$home_dir/.claude/projects" ]] \
+    || [[ -d "$home_dir/.gemini/tmp" ]] \
+    || [[ -d "$home_dir/.openclaw/agents" ]] \
+    || [[ -d "$home_dir/.config/opencode/storage/session" ]]
+}
+
 need_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -88,12 +97,60 @@ resolve_host_home_default() {
     return
   fi
 
+  local -a candidates=()
+  if [[ -n "${HOME:-}" ]]; then
+    candidates+=("$HOME")
+  fi
   if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-    eval echo "~${SUDO_USER}"
+    candidates+=("$(eval echo "~${SUDO_USER}")")
+  fi
+  if [[ "${EUID}" -eq 0 ]]; then
+    candidates+=("/root")
+  fi
+
+  local candidate
+  local fallback=""
+  for candidate in "${candidates[@]}"; do
+    [[ -z "$candidate" || ! -d "$candidate" ]] && continue
+    [[ -z "$fallback" ]] && fallback="$candidate"
+    if has_session_data "$candidate"; then
+      echo "$candidate"
+      return
+    fi
+  done
+
+  if [[ -n "$fallback" ]]; then
+    echo "$fallback"
+  else
+    echo "$HOME"
+  fi
+}
+
+resolve_access_host() {
+  if [[ -n "${AICHV_ACCESS_HOST:-}" ]]; then
+    echo "$AICHV_ACCESS_HOST"
     return
   fi
 
-  echo "$HOME"
+  if command -v hostname >/dev/null 2>&1; then
+    local lan_ip
+    lan_ip="$(hostname -I 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i !~ /^127\./) {print $i; exit}}')"
+    if [[ -n "$lan_ip" ]]; then
+      echo "$lan_ip"
+      return
+    fi
+  fi
+
+  if command -v ip >/dev/null 2>&1; then
+    local route_ip
+    route_ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')"
+    if [[ -n "$route_ip" ]]; then
+      echo "$route_ip"
+      return
+    fi
+  fi
+
+  echo "localhost"
 }
 
 prepare_env() {
@@ -112,11 +169,19 @@ prepare_env() {
 
   local host_home
   host_home="$(get_env_value HOST_HOME)"
+  local auto_home
+  auto_home="$(resolve_host_home_default)"
   if [[ -n "${AICHV_HOST_HOME:-}" ]]; then
     host_home="$AICHV_HOST_HOME"
     set_env_value "HOST_HOME" "$host_home"
   elif [[ -z "$host_home" || "$host_home" == "/home/your-user" ]]; then
-    host_home="$(resolve_host_home_default)"
+    host_home="$auto_home"
+    set_env_value "HOST_HOME" "$host_home"
+  elif [[ "$host_home" != "$auto_home" ]] \
+    && ! has_session_data "$host_home" \
+    && has_session_data "$auto_home"; then
+    log_info "Detected session data under $auto_home, updating HOST_HOME."
+    host_home="$auto_home"
     set_env_value "HOST_HOME" "$host_home"
   fi
 
@@ -136,16 +201,19 @@ start_service() {
   log_info "Starting service with docker compose..."
   docker compose -f docker-compose.local.yml up -d --build
 
-  local token port
+  local token port access_host
   token="$(get_env_value AICHV_TOKEN)"
   port="$(get_env_value AICHV_PORT)"
+  access_host="$(resolve_access_host)"
 
   echo ""
   echo "Installation complete."
   echo "Access URL:"
-  echo "http://localhost:${port}/?token=${token}"
+  echo "http://${access_host}:${port}/?token=${token}"
+  if [[ "$access_host" != "localhost" ]]; then
+    echo "Local URL: http://localhost:${port}/?token=${token}"
+  fi
   echo ""
-  echo "If remote access is needed, replace localhost with your server IP/domain."
 }
 
 main() {
