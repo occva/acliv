@@ -4,7 +4,7 @@
 
 ## 
 
-![image-20260309012909954](https://i.postimg.cc/RSDTVvc8/20260309012919172.png?dl=1)
+[![793shots-so.png](https://i.postimg.cc/c475f3JY/793shots-so.png)](https://postimg.cc/MvTDSvVK)
 
 
 功能
@@ -59,47 +59,19 @@ cargo tauri dev
 cargo tauri build
 ```
 
-## Linux Web 模式
+## Linux 部署
 
-### Installation Steps
-
+一键部署
 ```bash
 curl -fsSL https://raw.githubusercontent.com/occva/ai-cli-history-viewer/master/deploy/install.sh | sudo env AICHV_REPO_BRANCH=master bash
 ```
 
-安装完成后，脚本会打印访问地址（包含 token）。
+安装脚本会自动：
 
-### 常用命令
-
-```bash
-cd /opt/ai-cli-history-viewer/deploy
-docker compose -f docker-compose.local.yml up -d --build
-docker compose -f docker-compose.local.yml logs -f aichv-web
-docker compose -f docker-compose.local.yml down
-```
-
-健康检查：
-
-```bash
-curl http://127.0.0.1:17860/api/health
-```
-
-### 可选：构建 Web 二进制
-
-```bash
-npm run web:build
-```
-
-产物：
-
-```text
-src-tauri/target/release/aichv-web
-```
-
-产物路径：
-
-- EXE: `src-tauri/target/release/ai-cli-history-viewer-rust-tauri.exe`
-- Bundle: `src-tauri/target/release/bundle/`
+- 生成访问 token
+- 探测常见 provider 历史目录并写入部署配置
+- 拉取 GHCR 预构建镜像并启动服务
+- 输出最终访问地址
 
 ## 项目结构
 
