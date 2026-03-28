@@ -1,9 +1,6 @@
 services:
   aichv-web:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: aichv-web:latest
+    image: "${AICHV_IMAGE:-ghcr.io/occva/ai-cli-history-viewer}:${AICHV_VERSION:-latest}"
     container_name: aichv-web
     restart: unless-stopped
     ports:
@@ -12,11 +9,20 @@ services:
       - AICHV_HOST=0.0.0.0
       - AICHV_PORT=17860
       - AICHV_TOKEN=${AICHV_TOKEN:?AICHV_TOKEN is required}
-      - AICHV_HOME=${CONTAINER_HOME:-/host-home}
+      - AICHV_CLAUDE_DIR=/host-data/claude/projects
+      - AICHV_CODEX_DIR=/host-data/codex/sessions
+      - AICHV_GEMINI_DIR=/host-data/gemini/tmp
+      - AICHV_OPENCLAW_DIR=/host-data/openclaw/agents
+      - AICHV_OPENCODE_DIR=/host-data/opencode/storage
+      - AICHV_RUN_AS_ROOT=${AICHV_RUN_AS_ROOT:-0}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
       - app_data:/app/data
-      - ${HOST_HOME:?HOST_HOME is required}:${CONTAINER_HOME:-/host-home}:rw
+      - ${CLAUDE_DIR:-./empty/claude}:/host-data/claude:ro
+      - ${CODEX_DIR:-./empty/codex}:/host-data/codex:ro
+      - ${GEMINI_DIR:-./empty/gemini}:/host-data/gemini:ro
+      - ${OPENCLAW_DIR:-./empty/openclaw}:/host-data/openclaw:ro
+      - ${OPENCODE_DIR:-./empty/opencode}:/host-data/opencode:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:17860/api/health"]
       interval: 30s

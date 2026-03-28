@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: aichv-web:local
+    image: aichv-web:build
     container_name: aichv-web
     restart: unless-stopped
     ports:
