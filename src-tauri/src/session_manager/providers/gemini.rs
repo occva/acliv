@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use super::utils::{log_scan_error, parse_timestamp_to_ms, truncate_summary};
 use crate::paths::get_gemini_tmp_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
-use super::utils::{log_scan_error, parse_timestamp_to_ms, truncate_summary};
 const PROVIDER_ID: &str = "gemini";
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
@@ -78,7 +78,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = msg.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        result.push(SessionMessage { role, content, ts });
+        result.push(SessionMessage::plain(role, content, ts));
     }
 
     Ok(result)
@@ -138,6 +138,11 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         title: title.clone(),
         summary: title,
         project_dir: None, // project hash is not reversible
+        cwd: None,
+        model: value
+            .get("model")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string()),
         created_at,
         last_active_at: last_active_at.or(created_at),
         source_path: Some(source_path),

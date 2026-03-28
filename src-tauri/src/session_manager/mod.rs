@@ -1,6 +1,5 @@
 pub mod providers;
 
-
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -18,6 +17,10 @@ pub struct SessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<i64>,
@@ -30,10 +33,36 @@ pub struct SessionMeta {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_uuid: Option<String>,
     pub role: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<i64>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub is_sidechain: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tool_names: Vec<String>,
+}
+
+impl SessionMessage {
+    pub fn plain(role: String, content: String, ts: Option<i64>) -> Self {
+        Self {
+            msg_uuid: None,
+            parent_uuid: None,
+            role,
+            content,
+            ts,
+            is_sidechain: false,
+            tool_names: Vec::new(),
+        }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
@@ -85,7 +114,7 @@ pub fn delete_session(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
-    let root = provider_root(provider_id)?;
+    let root = crate::paths::get_provider_base_dir(provider_id)?;
     delete_session_with_root(provider_id, session_id, Path::new(source_path), &root)
 }
 
@@ -113,19 +142,6 @@ fn delete_session_with_root(
         "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
-}
-
-fn provider_root(provider_id: &str) -> Result<PathBuf, String> {
-    let root = match provider_id {
-        "codex" => crate::paths::get_codex_sessions_dir(),
-        "claude" => crate::paths::get_claude_projects_dir(),
-        "opencode" => opencode::get_opencode_data_dir(),
-        "openclaw" => crate::paths::get_openclaw_agents_dir(),
-        "gemini" => crate::paths::get_gemini_tmp_dir(),
-        _ => return Err(format!("Unsupported provider: {provider_id}")),
-    };
-
-    Ok(root)
 }
 
 fn canonicalize_existing_path(path: &Path, label: &str) -> Result<PathBuf, String> {

@@ -65,7 +65,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage::plain(role, content, ts));
     }
 
     Ok(messages)
@@ -115,6 +115,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
+    let mut model: Option<String> = None;
     let mut created_at: Option<i64> = None;
 
     // Extract metadata from head lines
@@ -137,6 +138,17 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
         if created_at.is_none() {
             created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        if model.is_none() {
+            model = value
+                .get("model")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    value.get("message")
+                        .and_then(|message| message.get("model"))
+                        .and_then(Value::as_str)
+                })
+                .map(|s| s.to_string());
         }
     }
 
@@ -180,7 +192,11 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
     // Skip snapshot-only files (e.g. file-history-snapshot without real chat messages).
     // These files usually have no cwd/message/timestamp and should not appear as sessions.
-    if project_dir.is_none() && summary.is_none() && created_at.is_none() && last_active_at.is_none() {
+    if project_dir.is_none()
+        && summary.is_none()
+        && created_at.is_none()
+        && last_active_at.is_none()
+    {
         return None;
     }
 
@@ -189,7 +205,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         session_id: session_id.clone(),
         title,
         summary,
-        project_dir,
+        project_dir: project_dir.clone(),
+        cwd: project_dir.clone(),
+        model,
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),

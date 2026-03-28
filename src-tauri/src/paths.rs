@@ -17,6 +17,18 @@ fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn app_data_dir() -> PathBuf {
+    if let Some(path) = env_dir("AICHV_HOME") {
+        return path;
+    }
+
+    if let Some(path) = dirs::data_local_dir() {
+        return path.join("ai-cli-history-viewer");
+    }
+
+    home_dir().join(".ai-cli-history-viewer")
+}
+
 fn normalize_data_dir(path: PathBuf, leaf: &str) -> PathBuf {
     if path
         .file_name()
@@ -83,4 +95,29 @@ pub fn get_opencode_storage_dir() -> PathBuf {
     dirs::home_dir()
         .map(|home| home.join(".local/share/opencode/storage"))
         .unwrap_or_else(|| PathBuf::from(".local/share/opencode/storage"))
+}
+
+pub fn get_provider_base_dir(provider_id: &str) -> Result<PathBuf, String> {
+    let root = match provider_id {
+        "claude" => get_claude_projects_dir(),
+        "codex" => get_codex_sessions_dir(),
+        "gemini" => get_gemini_tmp_dir(),
+        "openclaw" => get_openclaw_agents_dir(),
+        "opencode" => get_opencode_storage_dir(),
+        _ => return Err(format!("Unsupported provider: {provider_id}")),
+    };
+
+    Ok(root)
+}
+
+pub fn get_search_index_dir() -> PathBuf {
+    if let Some(path) = env_dir("AICHV_INDEX_DIR") {
+        return path;
+    }
+
+    app_data_dir().join("search-index")
+}
+
+pub fn get_search_db_path() -> PathBuf {
+    get_search_index_dir().join("search.db")
 }

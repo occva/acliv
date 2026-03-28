@@ -76,7 +76,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage::plain(role, content, ts));
     }
 
     Ok(messages)
@@ -108,6 +108,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
+    let mut model: Option<String> = None;
     let mut created_at: Option<i64> = None;
 
     // Extract metadata from head lines
@@ -131,6 +132,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                     project_dir = payload
                         .get("cwd")
                         .and_then(Value::as_str)
+                        .map(|s| s.to_string());
+                }
+                if model.is_none() {
+                    model = payload
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .or_else(|| payload.get("model_slug").and_then(Value::as_str))
                         .map(|s| s.to_string());
                 }
                 if let Some(ts) = payload.get("timestamp").and_then(parse_timestamp_to_ms) {
@@ -182,7 +190,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         session_id: session_id.clone(),
         title,
         summary,
-        project_dir,
+        project_dir: project_dir.clone(),
+        cwd: project_dir.clone(),
+        model,
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),

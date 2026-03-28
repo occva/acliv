@@ -116,7 +116,19 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage {
+            msg_uuid: None,
+            parent_uuid: None,
+            role,
+            content,
+            ts,
+            is_sidechain: false,
+            tool_names: if raw_role == "toolResult" {
+                vec!["toolResult".to_string()]
+            } else {
+                Vec::new()
+            },
+        });
     }
 
     Ok(messages)
@@ -158,6 +170,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
+    let mut model: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut summary: Option<String> = None;
 
@@ -189,6 +202,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             }
             if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
                 created_at.get_or_insert(ts);
+            }
+            if model.is_none() {
+                model = value
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string());
             }
             continue;
         }
@@ -237,7 +256,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         session_id: session_id.clone(),
         title,
         summary,
-        project_dir: cwd,
+        project_dir: cwd.clone(),
+        cwd: cwd.clone(),
+        model,
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
@@ -260,12 +281,13 @@ fn prune_sessions_index(
             index_path.display()
         )
     })?;
-    let mut index: serde_json::Map<String, Value> = serde_json::from_str(&content).map_err(|e| {
-        format!(
-            "Failed to parse OpenClaw sessions index {}: {e}",
-            index_path.display()
-        )
-    })?;
+    let mut index: serde_json::Map<String, Value> =
+        serde_json::from_str(&content).map_err(|e| {
+            format!(
+                "Failed to parse OpenClaw sessions index {}: {e}",
+                index_path.display()
+            )
+        })?;
 
     let source = source_path.to_string_lossy();
     index.retain(|_, entry| {

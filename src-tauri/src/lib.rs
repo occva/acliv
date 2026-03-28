@@ -4,7 +4,11 @@ mod cmd;
 #[cfg(feature = "desktop")]
 mod paths; // 新增
 #[cfg(feature = "desktop")]
+mod search_index;
+#[cfg(feature = "desktop")]
 mod session_manager; // 新增
+#[cfg(feature = "desktop")]
+mod watcher;
 
 #[cfg(feature = "desktop")]
 use cmd::*;
@@ -28,10 +32,22 @@ pub fn run() {
                     let _ = window.open_devtools();
                 }
             }
+            if let Err(err) = watcher::start_search_index_watcher(app.handle().clone()) {
+                log::error!("Failed to start search index watcher: {err}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_sessions,
+            rebuild_search_index,
+            refresh_search_index,
+            get_search_index_status,
+            search_content,
+            list_indexed_sessions,
+            list_indexed_sessions_page,
+            list_indexed_projects,
+            list_indexed_sessions_by_source_paths,
+            get_indexed_session_messages,
             get_session_messages,
             delete_session,
             launch_session_terminal,

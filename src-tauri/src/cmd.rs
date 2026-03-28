@@ -1,6 +1,7 @@
 // src-tauri/src/cmd.rs
 #![allow(non_snake_case)]
 
+use crate::search_index;
 use crate::session_manager;
 
 // ==================== 核心命令 ====================
@@ -12,6 +13,191 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
         .await
         .map_err(|e| format!("Failed to scan sessions: {e}"))?;
     Ok(sessions)
+}
+
+#[tauri::command]
+pub async fn rebuild_search_index() -> Result<search_index::RebuildSearchIndexResult, String> {
+    tauri::async_runtime::spawn_blocking(search_index::rebuild_index)
+        .await
+        .map_err(|e| format!("Failed to rebuild search index: {e}"))?
+}
+
+#[tauri::command]
+pub async fn refresh_search_index() -> Result<search_index::RefreshSearchIndexResult, String> {
+    tauri::async_runtime::spawn_blocking(search_index::refresh_index)
+        .await
+        .map_err(|e| format!("Failed to refresh search index: {e}"))?
+}
+
+#[tauri::command]
+pub async fn get_search_index_status() -> Result<search_index::SearchIndexStatus, String> {
+    tauri::async_runtime::spawn_blocking(search_index::get_index_status)
+        .await
+        .map_err(|e| format!("Failed to load search index status: {e}"))?
+}
+
+#[tauri::command]
+pub async fn search_content(
+    query: String,
+    limit: Option<u32>,
+    providerId: Option<String>,
+    sinceTs: Option<i64>,
+    projectPath: Option<String>,
+    sortBy: Option<String>,
+) -> Result<search_index::SearchContentResult, String> {
+    let trimmed = query.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(search_index::SearchContentResult {
+            total_count: 0,
+            hits: Vec::new(),
+        });
+    }
+
+    let limit = usize::try_from(limit.unwrap_or(50)).unwrap_or(50);
+    let provider_id = providerId.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let project_path = projectPath.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        search_index::search_content(
+            &trimmed,
+            limit,
+            provider_id.as_deref(),
+            sinceTs,
+            project_path.as_deref(),
+            sortBy.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to search indexed content: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_indexed_sessions(
+    limit: Option<u32>,
+    providerId: Option<String>,
+) -> Result<Vec<search_index::IndexedSession>, String> {
+    let limit = usize::try_from(limit.unwrap_or(200)).unwrap_or(200);
+    let provider_id = providerId.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        search_index::list_indexed_sessions(limit, provider_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Failed to list indexed sessions: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_indexed_sessions_page(
+    limit: Option<u32>,
+    offset: Option<u32>,
+    providerId: Option<String>,
+    projectPath: Option<String>,
+) -> Result<search_index::PagedIndexedSessionsResult, String> {
+    let limit = usize::try_from(limit.unwrap_or(50)).unwrap_or(50);
+    let offset = usize::try_from(offset.unwrap_or(0)).unwrap_or(0);
+    let provider_id = providerId.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let project_path = projectPath.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        search_index::list_indexed_sessions_page(
+            limit,
+            offset,
+            provider_id.as_deref(),
+            project_path.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to list paged indexed sessions: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_indexed_projects(
+    providerId: Option<String>,
+) -> Result<Vec<search_index::IndexedProjectOption>, String> {
+    let provider_id = providerId.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        search_index::list_indexed_projects(provider_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Failed to list indexed projects: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_indexed_sessions_by_source_paths(
+    providerId: String,
+    sourcePaths: Vec<String>,
+) -> Result<Vec<search_index::IndexedSession>, String> {
+    let provider_id = providerId.trim().to_string();
+    if provider_id.is_empty() {
+        return Err("providerId is required".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        search_index::list_indexed_sessions_by_source_paths(&provider_id, &sourcePaths)
+    })
+    .await
+    .map_err(|e| format!("Failed to list indexed sessions by source paths: {e}"))?
+}
+
+#[tauri::command]
+pub async fn get_indexed_session_messages(
+    providerId: String,
+    sourcePath: String,
+) -> Result<Vec<search_index::IndexedMessage>, String> {
+    let provider_id = providerId.trim().to_string();
+    let source_path = sourcePath.trim().to_string();
+    if provider_id.is_empty() || source_path.is_empty() {
+        return Err("providerId and sourcePath are required".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        search_index::get_indexed_session_messages(&provider_id, &source_path)
+    })
+    .await
+    .map_err(|e| format!("Failed to load indexed session messages: {e}"))?
 }
 
 /// 获取指定会话的消息详情
@@ -41,7 +227,11 @@ pub async fn delete_session(
     let source_path = sourcePath.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::delete_session(&provider_id, &session_id, &source_path)
+        let deleted = session_manager::delete_session(&provider_id, &session_id, &source_path)?;
+        if deleted {
+            let _ = search_index::delete_indexed_session(&provider_id, &source_path);
+        }
+        Ok(deleted)
     })
     .await
     .map_err(|e| format!("Failed to delete session: {e}"))?

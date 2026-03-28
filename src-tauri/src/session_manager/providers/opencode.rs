@@ -91,10 +91,14 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
     let messages = entries
         .into_iter()
-        .map(|(ts, _, role, content)| SessionMessage {
+        .map(|(ts, msg_id, role, content)| SessionMessage {
+            msg_uuid: Some(msg_id),
+            parent_uuid: None,
             role,
             content,
             ts: if ts > 0 { Some(ts) } else { None },
+            is_sidechain: false,
+            tool_names: Vec::new(),
         })
         .collect();
 
@@ -180,6 +184,16 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         .get("directory")
         .and_then(Value::as_str)
         .map(|s| s.to_string());
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("modelName").and_then(Value::as_str))
+        .or_else(|| {
+            value.get("config")
+                .and_then(|config| config.get("model"))
+                .and_then(Value::as_str)
+        })
+        .map(|s| s.to_string());
 
     let created_at = value
         .get("time")
@@ -216,6 +230,11 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         title: display_title,
         summary,
         project_dir: directory,
+        cwd: value
+            .get("directory")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string()),
+        model,
         created_at,
         last_active_at: updated_at.or(created_at),
         source_path: Some(source_path),
