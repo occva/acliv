@@ -62,8 +62,11 @@ Invoke-Step -Name 'push tag' -Action {
 }
 
 $releaseExists = $false
-gh release view $tag --repo occva/ai-cli-history-viewer --json tagName *> $null
-if ($LASTEXITCODE -eq 0) {
+$releaseTags = gh release list --repo occva/ai-cli-history-viewer --limit 100 --json tagName --jq ".[].tagName"
+if ($LASTEXITCODE -ne 0) {
+  throw "Failed to inspect existing GitHub releases."
+}
+if ($releaseTags -split "`r?`n" | Where-Object { $_ -eq $tag }) {
   $releaseExists = $true
 }
 
