@@ -56,13 +56,35 @@
       source_type: string;
       title: string;
       timestamp: string;
-      messages: Array<{ role: string; content: string; timestamp: string; seq: number }>;
+      messages: ConversationMessageView[];
   }
   interface ConversationMessage {
       role: string;
+      kind?: string;
+      name?: string;
+      callId?: string;
       content: string;
       ts?: number;
       seq: number;
+  }
+  interface ConversationMessageView {
+      role: string;
+      kind?: string;
+      name?: string;
+      callId?: string;
+      content: string;
+      timestamp: string;
+      seq: number;
+  }
+  interface MessageBlock {
+      role: string;
+      kind: string;
+      name?: string;
+      callId?: string;
+      content: string;
+      timestamp?: string;
+      seqStart: number;
+      seqEnd: number;
   }
   interface SearchIndexSyncEvent {
       phase: string;
@@ -818,16 +840,6 @@
     void warmupMessageCounts(name);
   }
 
-  interface MessagePair {
-      user?: string;
-      userTs?: string;
-      userSeqStart?: number;
-      userSeqEnd?: number;
-      assistant?: string;
-      assistantTs?: string;
-      assistantSeqStart?: number;
-      assistantSeqEnd?: number;
-  }
   function showFeedback(message: string, type: 'success' | 'error' | 'syncing' = 'success') {
       toastType = type;
       toastMessage = message;
@@ -918,82 +930,101 @@
       return `${current}${needsSingleNewline ? '\n' : '\n\n'}${next}`;
   }
 
+  function normalizeMessageKind(message: ConversationMessageView): string {
+      return message.kind?.trim() || 'message';
+  }
+
+  function canMergeMessageBlock(current: MessageBlock, next: ConversationMessageView): boolean {
+      return current.kind === 'message'
+          && normalizeMessageKind(next) === 'message'
+          && current.role.toLowerCase() === (next.role || '').toLowerCase();
+  }
+
+  function buildMessageBlocks(messages: ConversationMessageView[]): MessageBlock[] {
+      const blocks: MessageBlock[] = [];
+
+      for (const message of messages) {
+          const role = message.role || 'unknown';
+          const kind = normalizeMessageKind(message);
+          const content = message.content || '';
+          const timestamp = message.timestamp || '';
+          const seq = message.seq;
+          const last = blocks[blocks.length - 1];
+
+          if (last && canMergeMessageBlock(last, message)) {
+              last.content = mergeMessageContent(last.content, content);
+              last.timestamp = timestamp || last.timestamp;
+              last.seqEnd = seq;
+              continue;
+          }
+
+          blocks.push({
+              role,
+              kind,
+              name: message.name,
+              callId: message.callId,
+              content,
+              timestamp,
+              seqStart: seq,
+              seqEnd: seq,
+          });
+      }
+
+      return blocks;
+  }
+
   function transformConversation(conv: ConversationLike | null) {
       if (!conv) return null;
       const messages = conv.messages || [];
-      const pairs: MessagePair[] = [];
-
-      let i = 0;
-      while (i < messages.length) {
-          const msg = messages[i];
-          const role = (msg.role || '').toLowerCase();
-
-          if (role === 'user' || role === 'human') {
-              let userContent = msg.content || '';
-              let userTs = msg.timestamp || '';
-              let userSeqStart = msg.seq;
-              let userSeqEnd = msg.seq;
-              while (i + 1 < messages.length &&
-                     (messages[i+1].role.toLowerCase() === 'user' || messages[i+1].role.toLowerCase() === 'human')) {
-                  const nextContent = messages[i+1].content || '';
-                  userContent = mergeMessageContent(userContent, nextContent);
-                  userTs = messages[i+1].timestamp || userTs;
-                  userSeqEnd = messages[i+1].seq;
-                  i++;
-              }
-              let assistantContent = '';
-              let assistantTs = '';
-              let assistantSeqStart: number | undefined;
-              let assistantSeqEnd: number | undefined;
-              if (i + 1 < messages.length && messages[i+1].role.toLowerCase() === 'assistant') {
-                  assistantContent = messages[i+1].content || '';
-                  assistantTs = messages[i+1].timestamp || '';
-                  assistantSeqStart = messages[i+1].seq;
-                  assistantSeqEnd = messages[i+1].seq;
-                  i++;
-                  while (i + 1 < messages.length && messages[i+1].role.toLowerCase() === 'assistant') {
-                      const nextContent = messages[i+1].content || '';
-                      assistantContent = mergeMessageContent(assistantContent, nextContent);
-                      assistantTs = messages[i+1].timestamp || assistantTs;
-                      assistantSeqEnd = messages[i+1].seq;
-                      i++;
-                  }
-              }
-              pairs.push({
-                  user: userContent,
-                  userTs,
-                  userSeqStart,
-                  userSeqEnd,
-                  assistant: assistantContent,
-                  assistantTs,
-                  assistantSeqStart,
-                  assistantSeqEnd,
-              });
-          } else if (role === 'assistant') {
-              let assistantContent = msg.content || '';
-              let assistantTs = msg.timestamp || '';
-              let assistantSeqStart = msg.seq;
-              let assistantSeqEnd = msg.seq;
-              while (i + 1 < messages.length && messages[i+1].role.toLowerCase() === 'assistant') {
-                  const nextContent = messages[i+1].content || '';
-                  assistantContent = mergeMessageContent(assistantContent, nextContent);
-                  assistantTs = messages[i+1].timestamp || assistantTs;
-                  assistantSeqEnd = messages[i+1].seq;
-                  i++;
-              }
-              pairs.push({ assistant: assistantContent, assistantTs, assistantSeqStart, assistantSeqEnd });
-          }
-          i++;
-      }
-      return { ...conv, pairs };
+      return { ...conv, blocks: buildMessageBlocks(messages) };
   }
-  function isPairSearchMatch(pair: MessagePair, role: 'user' | 'assistant'): boolean {
+  function isBlockSearchMatch(block: MessageBlock): boolean {
       if (!activeSearchMatch) return false;
-      if (activeSearchMatch.role !== role) return false;
-      const start = role === 'user' ? pair.userSeqStart : pair.assistantSeqStart;
-      const end = role === 'user' ? pair.userSeqEnd : pair.assistantSeqEnd;
-      if (start === undefined || end === undefined) return false;
-      return activeSearchMatch.seq >= start && activeSearchMatch.seq <= end;
+      const blockRole = block.role.toLowerCase();
+      if (block.kind !== 'message') return false;
+      if (blockRole !== activeSearchMatch.role && !(blockRole === 'human' && activeSearchMatch.role === 'user')) {
+          return false;
+      }
+      return activeSearchMatch.seq >= block.seqStart && activeSearchMatch.seq <= block.seqEnd;
+  }
+
+  function getMessageBlockLabel(block: MessageBlock): string {
+      const role = block.role.toLowerCase();
+      if (isInstructionContextBlock(block)) return 'Startup Instructions';
+      if (block.kind !== 'message') return block.kind;
+      if (role === 'assistant') return 'Assistant';
+      if (role === 'human' || role === 'user') return 'User';
+      if (role === 'tool') return 'Tool';
+      return role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Message';
+  }
+
+  function getMessageBlockClass(block: MessageBlock): string {
+      if (isInstructionContextBlock(block)) return 'instruction-message';
+      if (block.kind === 'function_call' || block.kind === 'tool_use') return 'tool-call-message';
+      if (block.kind === 'function_call_output' || block.kind === 'tool_result') return 'tool-result-message';
+      const role = block.role.toLowerCase();
+      if (role === 'assistant') return 'assistant-message';
+      if (role === 'human' || role === 'user') return 'user-message';
+      return 'tool-result-message';
+  }
+
+  function isInstructionContextBlock(block: MessageBlock): boolean {
+      if (block.kind !== 'message') return false;
+      const content = (block.content || '').trim();
+      if (!content) return false;
+
+      return content.startsWith('# AGENTS.md instructions')
+          || content.startsWith('# CLAUDE.md instructions')
+          || content.startsWith('# AGENT.md instructions')
+          || content.startsWith('# INSTRUCTIONS')
+          || (
+              content.includes('<INSTRUCTIONS>')
+              && (content.includes('## Skills') || content.includes('## Plugins') || content.includes('AGENTS.md'))
+          );
+  }
+
+  function isCollapsibleBlock(block: MessageBlock): boolean {
+      return block.kind !== 'message' || isInstructionContextBlock(block);
   }
 
   function scrollActiveSearchMatchIntoView() {
@@ -1010,6 +1041,9 @@
       const indexed = await api.getIndexedSessionMessages(target.providerId, target.sourcePath);
       return indexed.map(msg => ({
           role: msg.role,
+          kind: msg.kind,
+          name: msg.name,
+          callId: msg.callId,
           content: msg.content,
           ts: msg.ts,
           seq: msg.seq,
@@ -1039,6 +1073,9 @@
       const raw = await api.getSessionMessages(target.providerId, target.sourcePath);
       return raw.map((msg, index) => ({
           role: msg.role,
+          kind: msg.kind,
+          name: msg.name,
+          callId: msg.callId,
           content: msg.content,
           ts: msg.ts,
           seq: index,
@@ -1061,7 +1098,13 @@
         title: sessionTitle(target),
         timestamp: formatTimestamp(target.lastActiveAt ?? target.createdAt),
         messages: rawMsgs.map(m => ({
-          role: m.role, content: m.content, timestamp: formatTimestamp(m.ts), seq: m.seq,
+          role: m.role,
+          kind: m.kind,
+          name: m.name,
+          callId: m.callId,
+          content: m.content,
+          timestamp: formatTimestamp(m.ts),
+          seq: m.seq,
         })),
       };
       currentConversation = transformConversation(convLike as any);
@@ -1647,45 +1690,58 @@
                     {/if}
                 </div>
                 <div class="messages-container">
-                    {#each currentConversation.pairs as pair, i}
-                        {#if pair.user}
-                            <div class="message user-message" class:search-hit={isPairSearchMatch(pair, 'user')}>
-                                <div class="message-header">
+                    {#each currentConversation.blocks as block, i}
+                        {#if isCollapsibleBlock(block)}
+                            <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
+                                <summary class="message-header">
                                     <div class="message-header-main">
-                                        <span class="message-role">User</span>
+                                        <span class="message-role">{getMessageBlockLabel(block)}</span>
                                         <span class="message-number">#{i + 1}</span>
+                                        {#if block.name}
+                                            <span class="tool-call-name">{block.name}</span>
+                                        {/if}
                                     </div>
                                     <div class="message-header-side">
-                                        {#if pair.userTs}
-                                            <span class="message-ts">{pair.userTs}</span>
+                                        {#if block.timestamp}
+                                            <span class="message-ts">{block.timestamp}</span>
+                                        {/if}
+                                        <span class="message-expand-hint">Expand</span>
+                                    </div>
+                                </summary>
+                                <div class="message-collapsible-body">
+                                    <div class="message-collapsible-meta-row">
+                                        {#if block.callId}
+                                            <div class="tool-call-meta">Call ID: {block.callId}</div>
                                         {/if}
                                         <button
-                                            class="inline-icon-btn message-copy-btn"
-                                            onclick={() => copyText(pair.user!, 'Message copied')}
+                                            class="inline-icon-btn"
+                                            onclick={() => copyText(block.content, 'Message copied')}
                                             type="button"
                                             title="Copy message"
                                         >
                                             {@html getIcon('copy', 14)}
                                         </button>
                                     </div>
+                                    <Markdown content={block.content} />
                                 </div>
-                                <Markdown content={pair.user} />
-                            </div>
-                        {/if}
-                        {#if pair.assistant}
-                            <div class="message assistant-message" class:search-hit={isPairSearchMatch(pair, 'assistant')}>
+                            </details>
+                        {:else}
+                            <div class={`message ${getMessageBlockClass(block)}`} class:search-hit={isBlockSearchMatch(block)}>
                                 <div class="message-header">
                                     <div class="message-header-main">
-                                        <span class="message-role">Assistant</span>
-                                        {#if pair.user}<span class="message-number">#{i+1}</span>{/if}
+                                        <span class="message-role">{getMessageBlockLabel(block)}</span>
+                                        <span class="message-number">#{i + 1}</span>
+                                        {#if block.name}
+                                            <span class="tool-call-name">{block.name}</span>
+                                        {/if}
                                     </div>
                                     <div class="message-header-side">
-                                        {#if pair.assistantTs}
-                                            <span class="message-ts">{pair.assistantTs}</span>
+                                        {#if block.timestamp}
+                                            <span class="message-ts">{block.timestamp}</span>
                                         {/if}
                                         <button
                                             class="inline-icon-btn message-copy-btn"
-                                            onclick={() => copyText(pair.assistant!, 'Message copied')}
+                                            onclick={() => copyText(block.content, 'Message copied')}
                                             type="button"
                                             title="Copy message"
                                         >
@@ -1693,7 +1749,7 @@
                                         </button>
                                     </div>
                                 </div>
-                                <Markdown content={pair.assistant} />
+                                <Markdown content={block.content} />
                             </div>
                         {/if}
                     {/each}

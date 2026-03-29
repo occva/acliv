@@ -1600,6 +1600,42 @@ body {
     transform: translateY(-2px);
 }
 
+.message-collapsible {
+    overflow: hidden;
+}
+
+.message-collapsible > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+.message-collapsible > summary::-webkit-details-marker {
+    display: none;
+}
+
+.message-collapsible[open] .message-header {
+    border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+.message-collapsible-body {
+    padding: 8px 0 8px;
+}
+
+.message-collapsible-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 0 16px 4px;
+    min-height: 32px;
+}
+
+.message-collapsible-meta-row .tool-call-meta {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+}
+
 .message.search-hit {
     border-color: var(--accent-yellow);
     box-shadow: 0 0 0 2px rgba(210, 153, 34, 0.18), var(--shadow-md);
@@ -1626,6 +1662,32 @@ body {
     box-shadow: var(--shadow-md);
     border-left: 4px solid var(--accent-blue);
     /* 添加蓝色边框强调 */
+}
+
+.tool-call-message,
+.tool-result-message,
+.instruction-message {
+    margin-right: auto;
+    width: 100%;
+    box-shadow: var(--shadow-sm);
+}
+
+.tool-call-message {
+    background: rgba(88, 166, 255, 0.06);
+    border: 1px solid rgba(88, 166, 255, 0.22);
+    border-left: 4px solid var(--accent-blue);
+}
+
+.tool-result-message {
+    background: rgba(46, 160, 67, 0.06);
+    border: 1px solid rgba(46, 160, 67, 0.22);
+    border-left: 4px solid var(--accent-green);
+}
+
+.instruction-message {
+    background: rgba(210, 153, 34, 0.06);
+    border: 1px solid rgba(210, 153, 34, 0.22);
+    border-left: 4px solid var(--accent-yellow);
 }
 
 .message-header {
@@ -1687,9 +1749,64 @@ body {
     color: var(--accent-blue);
 }
 
+.tool-call-message .message-role {
+    color: var(--accent-blue);
+    text-transform: none;
+    letter-spacing: 0.2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.tool-result-message .message-role {
+    color: var(--accent-green);
+    text-transform: none;
+    letter-spacing: 0.2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.instruction-message .message-role {
+    color: var(--accent-yellow);
+}
+
 .message-number {
     color: var(--text-muted);
     font-size: 10px;
+}
+
+.tool-call-name {
+    font-size: 12px;
+    color: var(--text-primary);
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.45);
+}
+
+.message-expand-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.2px;
+}
+
+.message-collapsible[open] .message-expand-hint::after {
+    content: " ▲";
+}
+
+.message-collapsible:not([open]) .message-expand-hint::after {
+    content: " ▼";
+}
+
+.tool-call-meta {
+    color: var(--text-muted);
+    font-size: 11px;
+    letter-spacing: 0.2px;
+}
+
+.message-collapsible-body .message-content {
+    padding-top: 0;
+}
+
+.message-collapsible-body .message-content :global(p:first-child) {
+    margin-top: 0;
 }
 
 .message-content {

@@ -22,6 +22,9 @@ export interface SessionMeta {
 /** 会话消息 */
 export interface SessionMessage {
     role: string;    // 'user' | 'assistant' | 'tool' | 'system'
+    kind?: string;
+    name?: string;
+    callId?: string;
     content: string;
     ts?: number;     // 毫秒时间戳（可选）
 }
@@ -101,6 +104,9 @@ export interface IndexedMessage {
     msgUuid?: string;
     parentUuid?: string;
     role: string;
+    kind: string;
+    name?: string;
+    callId?: string;
     content: string;
     ts?: number;
     isSidechain: boolean;

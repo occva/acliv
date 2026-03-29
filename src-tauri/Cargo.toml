@@ -1,6 +1,6 @@
 [package]
 name = "ai-cli-history-viewer"
-version = "1.0.3"
+version = "1.0.4"
 description = "AI CLI History Viewer - High Performance Desktop App"
 authors = ["Your Name"]
 license = "MIT"
