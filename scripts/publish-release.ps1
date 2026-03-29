@@ -44,8 +44,11 @@ foreach ($path in @($desktopExe, $setupExe, $msiFile, $releaseNotes)) {
 }
 
 Invoke-Step -Name 'ensure git tag exists' -Action {
-  git rev-parse --verify $tag 2>$null | Out-Null
+  $existingTag = git tag --list $tag
   if ($LASTEXITCODE -ne 0) {
+    throw "Failed to inspect existing tag: $tag"
+  }
+  if (-not ($existingTag | Where-Object { $_ -eq $tag })) {
     git tag $tag
   }
 }
