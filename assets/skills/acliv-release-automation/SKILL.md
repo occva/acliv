@@ -1,9 +1,9 @@
 ---
-name: aichv-release-automation
-description: Run the AI CLI History Viewer release workflow for this repository. Use this skill whenever the user wants to prepare, verify, rehearse, build, tag, or publish a desktop release for this Tauri project, including release requests in English or Chinese, phrases like release, publish, GitHub Release, version bump, packaging, rehearsal, 1.0.4, or run the release scripts. This skill is project-specific and should be used instead of generic release advice whenever the task targets this repository.
+name: acliv-release-automation
+description: Run the ACLIV release workflow for this repository. Use this skill whenever the user wants to prepare, verify, rehearse, build, tag, or publish a desktop release for this Tauri project, including release requests in English or Chinese, phrases like release, publish, GitHub Release, version bump, packaging, rehearsal, 1.0.4, or run the release scripts. This skill is project-specific and should be used instead of generic release advice whenever the task targets this repository.
 ---
 
-# AI CLI History Viewer Release Automation
+# ACLIV Release Automation
 
 This skill is only for the repository root that contains:
 
@@ -88,13 +88,13 @@ After build, inspect `release/v<version>/` and confirm the expected files exist.
 
 Expected desktop artifacts:
 
-- `ai-cli-history-viewer-v<version>.exe`
-- `ai-cli-history-viewer-v<version>-x64-setup.exe`
-- `ai-cli-history-viewer-v<version>-x64-en-us.msi`
+- `acliv-v<version>.exe`
+- `acliv-v<version>-x64-setup.exe`
+- `acliv-v<version>-x64-en-us.msi`
 
 Optional additional artifact:
 
-- `aichv-web-v<version>.exe`
+- `acliv-web-v<version>.exe`
 
 Expected notes file:
 
@@ -136,11 +136,11 @@ Do not rely on naive `ConvertFrom-Json` round-tripping for `package-lock.json`. 
 
 ### Locked release executables
 
-If `src-tauri/target/release/ai-cli-history-viewer.exe` is running, cleanup can fail. Prefer the project release script, which already stops repo-local release processes before cleaning.
+If `src-tauri/target/release/acliv.exe` is running, cleanup can fail. Prefer the project release script, which already stops repo-local release processes before cleaning.
 
 ### Build order matters
 
-This repo's Tauri bundle includes `aichv-web.exe`. The web binary must exist before `tauri build` runs, otherwise WiX `light.exe` can fail while packaging MSI.
+This repo's Tauri bundle includes `acliv-web.exe`. The web binary must exist before `tauri build` runs, otherwise WiX `light.exe` can fail while packaging MSI.
 
 ### NSIS dependency
 

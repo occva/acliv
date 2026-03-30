@@ -1,4 +1,4 @@
-# AI CLI History Viewer (Rust + Tauri)
+# ACLIV (Rust + Tauri)
 
 基于 Tauri 2 + Rust + Svelte 5 的 AI CLI 会话历史查看器。
 
@@ -28,7 +28,7 @@
 - `list_sessions`：扫描全部 provider，返回标准化 `SessionMeta[]`
 - `get_session_messages`：按 `providerId + sourcePath` 加载消息
 - `launch_session_terminal`：Windows 下启动终端执行恢复命令
-- `aichv-web`：独立 Web 入口（`/api/*`），复用同一套 `session_manager`
+- `acliv-web`：独立 Web 入口（`/api/*`），复用同一套 `session_manager`
 
 
 ## 技术栈
@@ -68,7 +68,7 @@ cargo tauri build
 
 一键部署
 ```bash
-curl -fsSL https://raw.githubusercontent.com/occva/ai-cli-history-viewer/master/deploy/install.sh | sudo env AICHV_REPO_BRANCH=master bash
+curl -fsSL https://raw.githubusercontent.com/occva/acliv/master/deploy/install.sh | sudo env ACLIV_REPO_BRANCH=master bash
 ```
 
 安装脚本会自动：
@@ -104,7 +104,7 @@ curl -fsSL https://raw.githubusercontent.com/occva/ai-cli-history-viewer/master/
 │   │   ├── watcher.rs            # 本地 session 文件监听与索引同步
 │   │   ├── paths.rs              # 各 CLI 默认目录解析
 │   │   ├── bin/
-│   │   │   └── aichv-web.rs      # Web 模式入口（二进制）
+│   │   │   └── acliv-web.rs      # Web 模式入口（二进制）
 │   │   ├── session_manager/      # 统一 provider 扫描与消息读取
 │   │   │   ├── mod.rs
 │   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode

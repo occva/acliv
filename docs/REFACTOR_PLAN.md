@@ -1,4 +1,4 @@
-# AI CLI History Viewer - Rust + Tauri 重构规划文档
+# ACLIV - Rust + Tauri 重构规划文档
 
 ## 1. 项目目标
 
@@ -63,7 +63,7 @@
 ## 5. 项目结构 (当前状态)
 
 ```
-ai-cli-history-viewer-rust-tauri/
+acliv-rust-tauri/
 ├── src-tauri/               # Rust 后端
 │   ├── src/
 │   │   ├── main.rs          # 入口

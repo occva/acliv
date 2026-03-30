@@ -4,7 +4,7 @@
 
 Linux 生产部署收敛为一条明确路径：
 
-1. 只使用远端预构建镜像 `ghcr.io/occva/ai-cli-history-viewer:latest`
+1. 只使用远端预构建镜像 `ghcr.io/occva/acliv:latest`
 2. 目标机器不执行前端或 Rust 源码编译
 3. 运行时按 provider 精确挂载历史数据目录
 4. 对 `/root` 场景提供可诊断的权限处理方案
@@ -39,13 +39,13 @@ Linux 生产部署收敛为一条明确路径：
 生产 compose 使用：
 
 ```yaml
-image: "${AICHV_IMAGE:-ghcr.io/occva/ai-cli-history-viewer}:${AICHV_VERSION:-latest}"
+image: "${ACLIV_IMAGE:-ghcr.io/occva/acliv}:${ACLIV_VERSION:-latest}"
 ```
 
 默认镜像即：
 
 ```text
-ghcr.io/occva/ai-cli-history-viewer:latest
+ghcr.io/occva/acliv:latest
 ```
 
 安装脚本行为已经收敛为：
@@ -81,11 +81,11 @@ compose 使用以下宿主机路径变量：
 
 后端读取的环境变量为：
 
-- `AICHV_CLAUDE_DIR=/host-data/claude/projects`
-- `AICHV_CODEX_DIR=/host-data/codex/sessions`
-- `AICHV_GEMINI_DIR=/host-data/gemini/tmp`
-- `AICHV_OPENCLAW_DIR=/host-data/openclaw/agents`
-- `AICHV_OPENCODE_DIR=/host-data/opencode/storage`
+- `ACLIV_CLAUDE_DIR=/host-data/claude/projects`
+- `ACLIV_CODEX_DIR=/host-data/codex/sessions`
+- `ACLIV_GEMINI_DIR=/host-data/gemini/tmp`
+- `ACLIV_OPENCLAW_DIR=/host-data/openclaw/agents`
+- `ACLIV_OPENCODE_DIR=/host-data/opencode/storage`
 
 ### 3.3 权限诊断
 
@@ -94,7 +94,7 @@ compose 使用以下宿主机路径变量：
 如果目录不可读：
 
 - 日志会明确指出是哪一个 provider 路径失败
-- `/root` 场景下可以通过 `AICHV_RUN_AS_ROOT=1` 保留 root 运行
+- `/root` 场景下可以通过 `ACLIV_RUN_AS_ROOT=1` 保留 root 运行
 
 后端 provider 扫描器也不再静默吞掉 `read_dir` 失败，而是输出 warning，避免前端只看到“没有数据”。
 
@@ -120,7 +120,7 @@ compose 使用以下宿主机路径变量：
 GitHub Actions 工作流负责：
 
 1. 构建镜像
-2. 推送到 `ghcr.io/occva/ai-cli-history-viewer`
+2. 推送到 `ghcr.io/occva/acliv`
 3. 在 tag 发布时同时推送版本 tag 和 `latest`
 
 当前约定：
@@ -135,12 +135,12 @@ GitHub Actions 工作流负责：
 ### 6.1 安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/occva/ai-cli-history-viewer/master/deploy/install.sh | sudo env AICHV_REPO_BRANCH=master bash
+curl -fsSL https://raw.githubusercontent.com/occva/acliv/master/deploy/install.sh | sudo env ACLIV_REPO_BRANCH=master bash
 ```
 
 说明：
 
-- 安装脚本会自动生成 `AICHV_TOKEN`
+- 安装脚本会自动生成 `ACLIV_TOKEN`
 - 安装脚本会自动探测常见 provider 历史目录并写入 `.env`
 - 安装脚本会自动执行镜像拉取和服务启动
 - 安装完成后会直接输出带 token 的访问 URL
@@ -148,7 +148,7 @@ curl -fsSL https://raw.githubusercontent.com/occva/ai-cli-history-viewer/master/
 ### 6.2 启动与升级
 
 ```bash
-cd /opt/ai-cli-history-viewer/deploy
+cd /opt/acliv/deploy
 docker compose -f docker-compose.yml pull
 docker compose -f docker-compose.yml up -d
 ```
@@ -156,7 +156,7 @@ docker compose -f docker-compose.yml up -d
 ### 6.3 查看日志
 
 ```bash
-docker compose -f docker-compose.yml logs -f aichv-web
+docker compose -f docker-compose.yml logs -f acliv-web
 ```
 
 ### 6.4 停止
@@ -170,9 +170,9 @@ docker compose -f docker-compose.yml down
 `.env` 核心字段：
 
 ```text
-AICHV_IMAGE=ghcr.io/occva/ai-cli-history-viewer
-AICHV_VERSION=latest
-AICHV_RUN_AS_ROOT=0
+ACLIV_IMAGE=ghcr.io/occva/acliv
+ACLIV_VERSION=latest
+ACLIV_RUN_AS_ROOT=0
 CLAUDE_DIR=
 CODEX_DIR=
 GEMINI_DIR=
@@ -182,8 +182,8 @@ OPENCODE_DIR=
 
 说明：
 
-- `AICHV_IMAGE` 和 `AICHV_VERSION` 控制拉取的远端镜像
-- `AICHV_RUN_AS_ROOT=1` 仅在必须读取 `/root` 下历史目录时启用
+- `ACLIV_IMAGE` 和 `ACLIV_VERSION` 控制拉取的远端镜像
+- `ACLIV_RUN_AS_ROOT=1` 仅在必须读取 `/root` 下历史目录时启用
 - provider 目录变量应直接指向宿主机对应 provider 根目录
 
 示例：

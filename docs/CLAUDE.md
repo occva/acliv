@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Desktop application built with **Tauri 2.0** (Rust backend) + **Svelte 5** (frontend). Reads and displays AI CLI conversation history from Claude, Codex, Gemini, OpenCode, and OpenClaw stored in the user's home directory.
 
-Also ships a **web server mode** (`aichv-web`) that serves the same UI over HTTP without Tauri.
+Also ships a **web server mode** (`acliv-web`) that serves the same UI over HTTP without Tauri.
 
 **Key architecture:** WebView (Svelte) ↔ Tauri IPC ↔ Rust commands ↔ `session_manager` ↔ File System
 
@@ -46,10 +46,10 @@ cargo clippy --manifest-path src-tauri/Cargo.toml
 
 - **[lib.rs](../src-tauri/src/lib.rs)** — Tauri app setup, command registration (desktop feature-gated)
 - **[cmd.rs](../src-tauri/src/cmd.rs)** — Tauri command handlers: `list_sessions`, `get_session_messages`, `delete_session`, `launch_session_terminal`, `open_in_file_explorer`
-- **[paths.rs](../src-tauri/src/paths.rs)** — Provider data directory resolution; supports env overrides (`AICHV_CLAUDE_DIR`, `AICHV_CODEX_DIR`, `AICHV_GEMINI_DIR`, `AICHV_OPENCLAW_DIR`, `AICHV_OPENCODE_DIR`, `AICHV_HOME`)
+- **[paths.rs](../src-tauri/src/paths.rs)** — Provider data directory resolution; supports env overrides (`ACLIV_CLAUDE_DIR`, `ACLIV_CODEX_DIR`, `ACLIV_GEMINI_DIR`, `ACLIV_OPENCLAW_DIR`, `ACLIV_OPENCODE_DIR`, `ACLIV_HOME`)
 - **[session_manager/mod.rs](../src-tauri/src/session_manager/mod.rs)** — Core types (`SessionMeta`, `SessionMessage`), parallel `scan_sessions()` (std threads), `load_messages()`, `delete_session()` dispatch
 - **[session_manager/providers/](../src-tauri/src/session_manager/providers/)** — One module per provider: `claude.rs`, `codex.rs`, `gemini.rs`, `opencode.rs`, `openclaw.rs`, `utils.rs`
-- **[bin/aichv-web.rs](../src-tauri/src/bin/aichv-web.rs)** — Web server binary (no Tauri, `--features web`)
+- **[bin/acliv-web.rs](../src-tauri/src/bin/acliv-web.rs)** — Web server binary (no Tauri, `--features web`)
 
 ### Frontend (Svelte 5) — `src/`
 
@@ -80,7 +80,7 @@ Desktop-only code is gated with `#[cfg(feature = "desktop")]`. The web binary us
 
 ### Path Resolution (`paths.rs`)
 
-All provider directories go through `resolve_provider_dir()`. Env vars take precedence over `~/.{tool}` defaults. Use `AICHV_HOME` to override home dir in tests.
+All provider directories go through `resolve_provider_dir()`. Env vars take precedence over `~/.{tool}` defaults. Use `ACLIV_HOME` to override home dir in tests.
 
 ### Delete Safety
 

@@ -1,4 +1,4 @@
-# AI CLI History Viewer 发布自动化方案
+# ACLIV 发布自动化方案
 
 ## 1. 摘要
 
@@ -25,9 +25,9 @@
 ### 2.1 已有能力
 
 - 当前项目已有桌面端构建链路：`npm run tauri build`
-- 当前项目已有 Web 构建链路：`cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin aichv-web`
+- 当前项目已有 Web 构建链路：`cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`
 - 当前项目已有 Docker 发布 workflow：`.github/workflows/docker-release.yml`
-- 当前项目已有 GHCR 镜像发布路径，镜像名为 `ghcr.io/occva/ai-cli-history-viewer`
+- 当前项目已有 GHCR 镜像发布路径，镜像名为 `ghcr.io/occva/acliv`
 
 ### 2.2 当前缺口
 
@@ -169,7 +169,7 @@
    - `src-tauri/target/release`
 4. 执行构建：
    - `npm run tauri build`
-   - `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin aichv-web`
+   - `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`
 5. 复制产物到 `release/<version>/`
 6. 生成：
    - `release/<version>/release-notes-v<version>.md`
@@ -197,9 +197,9 @@
    - `git push origin v1.0.3`
 5. 创建 GitHub Release
 6. 上传资产：
-   - `release/<version>/ai-cli-history-viewer-v<version>.exe`
-   - `release/<version>/ai-cli-history-viewer-v<version>-x64-setup.exe`
-   - `release/<version>/ai-cli-history-viewer-v<version>-x64-en-us.msi`
+   - `release/<version>/acliv-v<version>.exe`
+   - `release/<version>/acliv-v<version>-x64-setup.exe`
+   - `release/<version>/acliv-v<version>-x64-en-us.msi`
 
 约束：
 
@@ -272,9 +272,9 @@ release body 来源：
 
 上传资产范围：
 
-- `ai-cli-history-viewer-v<version>.exe`
-- `ai-cli-history-viewer-v<version>-x64-setup.exe`
-- `ai-cli-history-viewer-v<version>-x64-en-us.msi`
+- `acliv-v<version>.exe`
+- `acliv-v<version>-x64-setup.exe`
+- `acliv-v<version>-x64-en-us.msi`
 
 ### 6.2 Web / Docker `docker-release.yml`
 
@@ -282,10 +282,10 @@ release body 来源：
 
 - 继续由 `master` 和 `v*` tag 触发
 - 镜像标签策略：
-  - `ghcr.io/occva/ai-cli-history-viewer:vX.Y.Z`
-  - `ghcr.io/occva/ai-cli-history-viewer:latest`
+  - `ghcr.io/occva/acliv:vX.Y.Z`
+  - `ghcr.io/occva/acliv:latest`
 - 容器运行必须保留：
-  - `AICHV_HOME=/app/data`
+  - `ACLIV_HOME=/app/data`
   - 保证 `search.db` 可持久化
 
 约束：
@@ -331,7 +331,7 @@ release body 来源：
 - 推送 `v1.0.3` 后：
   - 桌面 release workflow 成功
   - Docker workflow 成功
-- 容器重建后索引库仍保留，验证 `AICHV_HOME=/app/data` 生效
+- 容器重建后索引库仍保留，验证 `ACLIV_HOME=/app/data` 生效
 
 ## 9. 默认假设
 

@@ -1,4 +1,4 @@
-# AI CLI History Viewer 搜索能力升级方案
+# ACLIV 搜索能力升级方案
 
 ## 1. 现状
 
@@ -43,7 +43,7 @@
 - TypeScript + `better-sqlite3` 实现方式
 - `captures/opencli` 这一类与当前项目无关的数据域
 
-当前项目更适合在 Rust 侧建立本地索引层，并让 Tauri 桌面端与 `aichv-web` 共用同一套搜索服务。
+当前项目更适合在 Rust 侧建立本地索引层，并让 Tauri 桌面端与 `acliv-web` 共用同一套搜索服务。
 
 ### 1.4 与 spool 实码对齐后的基线
 
@@ -83,7 +83,7 @@
 
 - 搜索消息正文，而不只搜索会话标题/摘要
 - 支持本地持久化索引，避免每次搜索都重新扫源文件
-- 搜索 API 同时服务 Tauri 桌面端和 `aichv-web`
+- 搜索 API 同时服务 Tauri 桌面端和 `acliv-web`
 - 初期尽量复用现有 `session_manager::scan_sessions()` / `load_messages()`
 - 支持增量刷新，而不是每次全量重建
 - 保留当前 UI 可用性，允许分阶段替换
@@ -129,7 +129,7 @@
 
 - `session_manager`: 原始数据读取、provider 差异消化
 - `search_index`: 索引状态、增量同步、FTS 查询
-- `cmd.rs` / `aichv-web.rs`: 对外命令和 HTTP 接口
+- `cmd.rs` / `acliv-web.rs`: 对外命令和 HTTP 接口
 
 ### 2.4 目录与运行时建议
 
@@ -137,9 +137,9 @@
 
 建议优先级：
 
-1. `AICHV_INDEX_DIR` 环境变量
+1. `ACLIV_INDEX_DIR` 环境变量
 2. 桌面端使用 app data 目录
-3. web 模式退化到 `AICHV_HOME` 或用户 home 下的应用目录
+3. web 模式退化到 `ACLIV_HOME` 或用户 home 下的应用目录
 
 建议文件：
 
@@ -411,7 +411,7 @@
 
 其中：
 
-- `search()` 同时给 Tauri IPC 与 `aichv-web` 使用
+- `search()` 同时给 Tauri IPC 与 `acliv-web` 使用
 - `refresh_search_index()` 负责增量同步
 - `rebuild_search_index()` 负责清库重建
 
