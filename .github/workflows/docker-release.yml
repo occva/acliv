@@ -36,7 +36,8 @@ jobs:
           image="ghcr.io/occva/acliv"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             version="${GITHUB_REF#refs/tags/}"
-            tags="${image}:${version},${image}:latest"
+            clean_version="${version#v}"
+            tags="${image}:${version},${image}:${clean_version},${image}:latest"
           else
             short_sha="${GITHUB_SHA::7}"
             tags="${image}:latest,${image}:sha-${short_sha}"
