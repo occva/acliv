@@ -257,6 +257,7 @@
       seq: number;
       query: string;
   } | null>(null);
+  let hideFunctionCalls = $state(false);
   let isSourceDropdownOpen = $state(false);
   let theme = $state(localStorage.getItem('theme') || 'dark');
   let isLoading = $state(false);
@@ -978,6 +979,17 @@
       const messages = conv.messages || [];
       return { ...conv, blocks: buildMessageBlocks(messages) };
   }
+  function isFunctionCallLikeBlock(block: MessageBlock): boolean {
+      const kind = (block.kind || '').trim().toLowerCase();
+      return kind === 'function_call'
+          || kind === 'function_call_output'
+          || kind === 'tool_use'
+          || kind === 'tool_result';
+  }
+  function getVisibleConversationBlocks(blocks: MessageBlock[]): MessageBlock[] {
+      if (!hideFunctionCalls) return blocks;
+      return blocks.filter(block => !isFunctionCallLikeBlock(block));
+  }
   function isBlockSearchMatch(block: MessageBlock): boolean {
       if (!activeSearchMatch) return false;
       const blockRole = block.role.toLowerCase();
@@ -1135,6 +1147,9 @@
 
   function toggleTheme() {
       setTheme(theme === 'dark' ? 'light' : 'dark');
+  }
+  function toggleHideFunctionCalls() {
+      hideFunctionCalls = !hideFunctionCalls;
   }
   function selectSource(source: string) {
       if (currentSource === source) {
@@ -1690,7 +1705,7 @@
                     {/if}
                 </div>
                 <div class="messages-container">
-                    {#each currentConversation.blocks as block, i}
+                    {#each getVisibleConversationBlocks(currentConversation.blocks) as block, i}
                         {#if isCollapsibleBlock(block)}
                             <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
                                 <summary class="message-header">
@@ -1948,6 +1963,9 @@
                       </button>
                       <button class="index-action-btn" type="button" onclick={() => runSearchIndexAction('rebuild')} disabled={isIndexActionRunning}>
                           Rebuild
+                      </button>
+                      <button class="index-action-btn" class:active={hideFunctionCalls} type="button" onclick={toggleHideFunctionCalls}>
+                          Hide function_call
                       </button>
                   </div>
               </div>

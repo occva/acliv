@@ -394,6 +394,12 @@ body {
     border-color: var(--bg-active);
 }
 
+.index-action-btn.active {
+    color: #fff;
+    background: var(--bg-active);
+    border-color: var(--bg-active);
+}
+
 
 
 /* Header Actions */
