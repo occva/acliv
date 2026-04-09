@@ -73,10 +73,10 @@ curl -fsSL https://raw.githubusercontent.com/occva/acliv/master/deploy/install.s
 
 安装脚本会自动：
 
-- 生成访问 token
+- 生成 Web 登录账号密码（默认账号 `admin`）
 - 探测常见 provider 历史目录并写入部署配置
 - 拉取 GHCR 预构建镜像并启动服务
-- 输出最终访问地址
+- 输出访问地址和登录凭据
 
 ## 项目结构
 

@@ -140,10 +140,10 @@ curl -fsSL https://raw.githubusercontent.com/occva/acliv/master/deploy/install.s
 
 说明：
 
-- 安装脚本会自动生成 `ACLIV_TOKEN`
+- 安装脚本会自动生成 Web 登录密码，默认用户名为 `admin`
 - 安装脚本会自动探测常见 provider 历史目录并写入 `.env`
 - 安装脚本会自动执行镜像拉取和服务启动
-- 安装完成后会直接输出带 token 的访问 URL
+- 安装完成后会直接输出访问 URL、用户名和密码
 
 ### 6.2 启动与升级
 
@@ -170,6 +170,8 @@ docker compose -f docker-compose.yml down
 `.env` 核心字段：
 
 ```text
+ACLIV_WEB_USERNAME=admin
+ACLIV_WEB_PASSWORD=
 ACLIV_IMAGE=ghcr.io/occva/acliv
 ACLIV_VERSION=latest
 ACLIV_RUN_AS_ROOT=0
@@ -182,6 +184,8 @@ OPENCODE_DIR=
 
 说明：
 
+- `ACLIV_WEB_USERNAME` 默认使用 `admin`
+- `ACLIV_WEB_PASSWORD` 为 Web 登录密码，安装脚本会自动生成
 - `ACLIV_IMAGE` 和 `ACLIV_VERSION` 控制拉取的远端镜像
 - `ACLIV_RUN_AS_ROOT=1` 仅在必须读取 `/root` 下历史目录时启用
 - provider 目录变量应直接指向宿主机对应 provider 根目录
@@ -200,7 +204,7 @@ OPENCODE_DIR=/root/.config/opencode
 
 需要明确区分：
 
-- `install.sh` 是 Linux 对外正式部署入口，负责准备 `.env`、探测 provider 路径、生成 token、拉起服务
+- `install.sh` 是 Linux 对外正式部署入口，负责准备 `.env`、探测 provider 路径、生成登录密码、拉起服务
 - `docker-compose.yml` 是安装脚本落地使用的运行配置，只拉远端镜像
 - `deploy/Dockerfile` 是 CI 构建镜像用，不是服务器本地构建入口
 - `docker-compose.local.yml` 和 `docker-compose.build.yml` 已移除，避免继续暴露非生产路径
@@ -219,4 +223,4 @@ Linux 生产部署已经明确为：
 
 一句话总结：
 
-> Linux 用户只需要运行 `install.sh`；脚本负责准备配置、生成 token、拉起服务。
+> Linux 用户只需要运行 `install.sh`；脚本负责准备配置、生成登录密码、拉起服务。
