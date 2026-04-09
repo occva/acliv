@@ -48,9 +48,14 @@ check_provider_dir() {
   fi
 }
 
-if [ -z "${ACLIV_TOKEN:-}" ]; then
-  log_error "ACLIV_TOKEN is required"
-  exit 1
+if [ -z "${ACLIV_WEB_USERNAME:-}" ]; then
+  export ACLIV_WEB_USERNAME="admin"
+fi
+
+if [ -z "${ACLIV_WEB_PASSWORD:-}" ] && [ -n "${ACLIV_TOKEN:-}" ]; then
+  log_warn "ACLIV_WEB_PASSWORD is unset; falling back to legacy ACLIV_TOKEN login password."
+elif [ -z "${ACLIV_WEB_PASSWORD:-}" ]; then
+  log_warn "ACLIV_WEB_PASSWORD is unset; acliv-web will generate a temporary password at startup."
 fi
 
 for provider in \

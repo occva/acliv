@@ -9,7 +9,9 @@ services:
       - ACLIV_HOST=0.0.0.0
       - ACLIV_PORT=17860
       - ACLIV_HOME=/app/data
-      - ACLIV_TOKEN=${ACLIV_TOKEN:?ACLIV_TOKEN is required}
+      - ACLIV_TOKEN=${ACLIV_TOKEN:-}
+      - ACLIV_WEB_USERNAME=${ACLIV_WEB_USERNAME:-admin}
+      - ACLIV_WEB_PASSWORD=${ACLIV_WEB_PASSWORD:-}
       - ACLIV_CLAUDE_DIR=/host-data/claude/projects
       - ACLIV_CODEX_DIR=/host-data/codex/sessions
       - ACLIV_GEMINI_DIR=/host-data/gemini/tmp

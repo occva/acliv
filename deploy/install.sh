@@ -54,15 +54,16 @@ sync_repo() {
 }
 
 generate_secret() {
+  local bytes="${1:-16}"
   if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
+    openssl rand -hex "$bytes"
     return
   fi
   if command -v xxd >/dev/null 2>&1; then
-    head -c 32 /dev/urandom | xxd -p -c 32
+    head -c "$bytes" /dev/urandom | xxd -p -c "$bytes"
     return
   fi
-  log_error "openssl or xxd is required to generate ACLIV_TOKEN."
+  log_error "openssl or xxd is required to generate ACLIV_WEB_PASSWORD."
   exit 1
 }
 
@@ -151,11 +152,25 @@ prepare_env() {
     cp .env.example .env
   fi
 
-  local token
-  token="$(get_env_value ACLIV_TOKEN)"
-  if [[ -z "$token" ]]; then
-    token="$(generate_secret)"
-    set_env_value "ACLIV_TOKEN" "$token"
+  local web_username
+  web_username="$(get_env_value ACLIV_WEB_USERNAME)"
+  if [[ -z "$web_username" ]]; then
+    web_username="admin"
+    set_env_value "ACLIV_WEB_USERNAME" "$web_username"
+  fi
+
+  local web_password
+  web_password="$(get_env_value ACLIV_WEB_PASSWORD)"
+  if [[ -z "$web_password" ]]; then
+    web_password="$(generate_secret 16)"
+    set_env_value "ACLIV_WEB_PASSWORD" "$web_password"
+  fi
+
+  local auth_token
+  auth_token="$(get_env_value ACLIV_TOKEN)"
+  if [[ -z "$auth_token" ]]; then
+    auth_token="$(generate_secret 32)"
+    set_env_value "ACLIV_TOKEN" "$auth_token"
   fi
 
   local image
@@ -252,8 +267,9 @@ start_service() {
   cd "$INSTALL_DIR/deploy"
   compose_up_image
 
-  local token port public_ip
-  token="$(get_env_value ACLIV_TOKEN)"
+  local web_username web_password port public_ip
+  web_username="$(get_env_value ACLIV_WEB_USERNAME)"
+  web_password="$(get_env_value ACLIV_WEB_PASSWORD)"
   port="$(get_env_value ACLIV_PORT)"
   public_ip="$(resolve_public_ip)"
 
@@ -261,11 +277,13 @@ start_service() {
   echo "Installation complete."
   if [[ -n "$public_ip" ]]; then
     echo "Access URL:"
-    echo "http://${public_ip}:${port}/?token=${token}"
+    echo "http://${public_ip}:${port}/"
   else
-    echo "未获取到公网 IP，请手动输入你的 IP 后拼接以下地址："
-    echo "${port}/?token=${token}"
+    echo "未获取到公网 IP，请手动替换 <your-server-ip> 后访问："
+    echo "http://<your-server-ip>:${port}/"
   fi
+  echo "Username: ${web_username}"
+  echo "Password: ${web_password}"
   echo ""
 }
 
