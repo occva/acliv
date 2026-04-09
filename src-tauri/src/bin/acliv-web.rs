@@ -3,14 +3,16 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use axum::{
-    extract::State,
+    extract::{Path as AxumPath, State},
     http::{header, Request, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::{get, post},
+    response::{Html, IntoResponse, Response},
+    routing::{get, get_service, post},
     Json, Router,
 };
+use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::task::spawn_blocking;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -23,7 +25,10 @@ mod session_manager;
 
 #[derive(Clone)]
 struct AppState {
-    token: String,
+    auth_token: String,
+    auth_username: String,
+    auth_password: String,
+    index_html_path: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +100,26 @@ struct SessionMessagesRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AuthLoginRequest {
+    username: String,
+    password: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthLoginResponse {
+    token: String,
+    username: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthVerifyResponse {
+    username: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DeleteSessionRequest {
     provider_id: String,
     session_id: String,
@@ -141,6 +166,12 @@ struct HealthResponse {
     ok: bool,
 }
 
+enum PasswordSource {
+    Env,
+    LegacyToken,
+    Generated,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = env::var("ACLIV_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -148,11 +179,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(17860);
-    let token = env::var("ACLIV_TOKEN")
+    let auth_username = env::var("ACLIV_WEB_USERNAME")
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .ok_or("Missing required env: ACLIV_TOKEN")?;
+        .unwrap_or_else(|| "admin".to_string());
+    let env_password = env::var("ACLIV_WEB_PASSWORD")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let legacy_token = env::var("ACLIV_TOKEN")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let (auth_password, password_source) = match (env_password, legacy_token.clone()) {
+        (Some(password), _) => (password, PasswordSource::Env),
+        (None, Some(token)) => (token, PasswordSource::LegacyToken),
+        (None, None) => (generate_secret(18), PasswordSource::Generated),
+    };
+    let auth_token = legacy_token.unwrap_or_else(|| derive_auth_token(&auth_username, &auth_password));
 
     let socket: SocketAddr = format!("{host}:{port}")
         .parse()
@@ -166,13 +211,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-
     println!("ACLIV (Web)");
     println!("Listening on: http://{host}:{port}");
     println!("Frontend dist: {}", frontend_dist.display());
+    println!("Web login username: {}", auth_username);
+    match password_source {
+        PasswordSource::Generated => {
+            println!("Web login password (generated): {}", auth_password);
+            println!("Tip: set ACLIV_WEB_PASSWORD to keep a fixed password across restarts.");
+        }
+        PasswordSource::Env => {
+            println!("Web login password source: ACLIV_WEB_PASSWORD");
+        }
+        PasswordSource::LegacyToken => {
+            println!("Web login password source: ACLIV_TOKEN (legacy fallback)");
+            println!("Tip: set ACLIV_WEB_PASSWORD to migrate away from legacy token login.");
+        }
+    }
 
-    let state = AppState { token };
+    let state = AppState {
+        auth_token,
+        auth_username,
+        auth_password,
+        index_html_path: index_html.clone(),
+    };
     let protected_routes = Router::new()
+        .route("/auth/verify", get(verify_auth))
         .route("/sessions", get(list_sessions))
         .route("/search/index/status", get(get_search_index_status))
         .route("/search/index/rebuild", post(rebuild_search_index))
@@ -197,14 +261,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let api_routes = Router::new()
         .route("/health", get(health))
+        .route("/auth/login", post(login_auth))
         .merge(protected_routes);
 
-    let static_service = ServeDir::new(&frontend_dist)
-        .append_index_html_on_directories(true)
-        .fallback(ServeFile::new(index_html));
+    let static_service = ServeDir::new(&frontend_dist).append_index_html_on_directories(true);
+    let icon_file = frontend_dist.join("icon.png");
 
     let app = Router::new()
         .nest("/api", api_routes)
+        .route("/", get(serve_spa_shell))
+        .route("/icon.png", get_service(ServeFile::new(icon_file)))
+        .route("/:session_id", get(serve_session_spa_shell))
         .fallback_service(static_service)
         .with_state(state);
 
@@ -230,6 +297,94 @@ fn resolve_frontend_dist() -> PathBuf {
     cwd.join("../dist")
 }
 
+fn load_spa_shell(index_html: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let html = std::fs::read_to_string(index_html)?;
+    if html.contains("<base ") {
+        return Ok(html);
+    }
+
+    if let Some(head_index) = html.find("<head>") {
+        let insert_at = head_index + "<head>".len();
+        let mut patched = String::with_capacity(html.len() + 24);
+        patched.push_str(&html[..insert_at]);
+        patched.push_str("\n    <base href=\"/\" />");
+        patched.push_str(&html[insert_at..]);
+        return Ok(patched);
+    }
+
+    Ok(html)
+}
+
+fn generate_secret(len: usize) -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = thread_rng();
+    (0..len)
+        .map(|_| {
+            let index = rng.gen_range(0..CHARSET.len());
+            CHARSET[index] as char
+        })
+        .collect()
+}
+
+fn derive_auth_token(username: &str, password: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"acliv-web-auth-token:v1\0");
+    hasher.update(username.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(password.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn render_spa_shell(index_html: &Path) -> Result<Html<String>, AppError> {
+    let html = load_spa_shell(index_html)
+        .map_err(|e| AppError::internal(format!("Failed to load SPA shell: {e}")))?;
+    Ok(Html(html))
+}
+
+async fn serve_spa_shell(State(state): State<AppState>) -> Result<Html<String>, AppError> {
+    render_spa_shell(&state.index_html_path)
+}
+
+async fn serve_session_spa_shell(
+    AxumPath(_session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Html<String>, AppError> {
+    render_spa_shell(&state.index_html_path)
+}
+
+async fn login_auth(
+    State(state): State<AppState>,
+    Json(payload): Json<AuthLoginRequest>,
+) -> Result<Json<ApiResult<AuthLoginResponse>>, AppError> {
+    validate_non_empty("username", &payload.username)?;
+    validate_non_empty("password", &payload.password)?;
+
+    let username = payload.username.trim();
+    let password = payload.password.trim();
+    if username != state.auth_username || password != state.auth_password {
+        return Err(AppError::unauthorized("Invalid username or password"));
+    }
+
+    Ok(Json(ApiResult {
+        ok: true,
+        data: AuthLoginResponse {
+            token: state.auth_token.clone(),
+            username: state.auth_username.clone(),
+        },
+    }))
+}
+
+async fn verify_auth(
+    State(state): State<AppState>,
+) -> Result<Json<ApiResult<AuthVerifyResponse>>, AppError> {
+    Ok(Json(ApiResult {
+        ok: true,
+        data: AuthVerifyResponse {
+            username: state.auth_username.clone(),
+        },
+    }))
+}
+
 async fn require_auth(
     State(state): State<AppState>,
     request: Request<axum::body::Body>,
@@ -240,7 +395,7 @@ async fn require_auth(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| token == state.token)
+        .map(|token| token == state.auth_token)
         .unwrap_or(false);
 
     if !authorized {

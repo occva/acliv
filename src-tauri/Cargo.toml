@@ -43,6 +43,8 @@ log = "0.4"
 dirs = "5.0"
 regex = "1.11"
 chrono = { version = "0.4.44", features = ["serde"] }
+rand = "0.8"
+sha2 = "0.10"
 axum = { version = "0.7.9", optional = true }
 tokio = { version = "1.44.2", features = ["macros", "rt-multi-thread", "signal"], optional = true }
 tower-http = { version = "0.5.2", features = ["fs"], optional = true }
