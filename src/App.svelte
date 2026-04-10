@@ -86,6 +86,8 @@
       timestamp?: string;
       seqStart: number;
       seqEnd: number;
+      blocks?: MessageBlock[];
+      runCount?: number;
   }
   interface SearchIndexSyncEvent {
       phase: string;
@@ -1251,6 +1253,43 @@
       return blocks;
   }
 
+  function buildToolGroupBlock(toolBlocks: MessageBlock[]): MessageBlock {
+      const runBlocks = toolBlocks.filter(block => block.kind === 'function_call' || block.kind === 'tool_use');
+
+      return {
+          role: 'assistant',
+          kind: 'tool_group',
+          content: '',
+          timestamp: toolBlocks[toolBlocks.length - 1]?.timestamp || toolBlocks[0]?.timestamp,
+          seqStart: toolBlocks[0]?.seqStart ?? 0,
+          seqEnd: toolBlocks[toolBlocks.length - 1]?.seqEnd ?? toolBlocks[0]?.seqStart ?? 0,
+          blocks: toolBlocks,
+          runCount: runBlocks.length || toolBlocks.length,
+      };
+  }
+
+  function groupToolCallBlocks(blocks: MessageBlock[]): MessageBlock[] {
+      const grouped: MessageBlock[] = [];
+
+      for (let index = 0; index < blocks.length; index += 1) {
+          const current = blocks[index];
+          if (!isFunctionCallLikeBlock(current)) {
+              grouped.push(current);
+              continue;
+          }
+
+          const toolBlocks = [current];
+          while (index + 1 < blocks.length && isFunctionCallLikeBlock(blocks[index + 1])) {
+              toolBlocks.push(blocks[index + 1]);
+              index += 1;
+          }
+
+          grouped.push(buildToolGroupBlock(toolBlocks));
+      }
+
+      return grouped;
+  }
+
   function transformConversation(conv: ConversationLike | null) {
       if (!conv) return null;
       const messages = conv.messages || [];
@@ -1264,8 +1303,11 @@
           || kind === 'tool_result';
   }
   function getVisibleConversationBlocks(blocks: MessageBlock[]): MessageBlock[] {
-      if (!hideFunctionCalls) return blocks;
-      return blocks.filter(block => !isFunctionCallLikeBlock(block));
+      if (hideFunctionCalls) {
+          return blocks.filter(block => !isFunctionCallLikeBlock(block));
+      }
+
+      return groupToolCallBlocks(blocks);
   }
   function isBlockSearchMatch(block: MessageBlock): boolean {
       if (!activeSearchMatch) return false;
@@ -1280,8 +1322,10 @@
   function getMessageBlockLabel(block: MessageBlock): string {
       const role = block.role.toLowerCase();
       if (isInstructionContextBlock(block)) return 'Startup Instructions';
+      if (block.kind === 'tool_group') return getToolGroupSummary(block);
       if (block.kind !== 'message') return block.kind;
       if (role === 'assistant') return 'Assistant';
+      if (role === 'developer') return 'Developer';
       if (role === 'human' || role === 'user') return 'User';
       if (role === 'tool') return 'Tool';
       return role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Message';
@@ -1289,10 +1333,12 @@
 
   function getMessageBlockClass(block: MessageBlock): string {
       if (isInstructionContextBlock(block)) return 'instruction-message';
+      if (block.kind === 'tool_group') return 'tool-group-message';
       if (block.kind === 'function_call' || block.kind === 'tool_use') return 'tool-call-message';
       if (block.kind === 'function_call_output' || block.kind === 'tool_result') return 'tool-result-message';
       const role = block.role.toLowerCase();
       if (role === 'assistant') return 'assistant-message';
+      if (role === 'developer') return 'developer-message';
       if (role === 'human' || role === 'user') return 'user-message';
       return 'tool-result-message';
   }
@@ -1313,7 +1359,36 @@
   }
 
   function isCollapsibleBlock(block: MessageBlock): boolean {
-      return block.kind !== 'message' || isInstructionContextBlock(block);
+      return block.kind !== 'message' || isInstructionContextBlock(block) || block.role.toLowerCase() === 'developer';
+  }
+
+  function isToolGroupBlock(block: MessageBlock): boolean {
+      return block.kind === 'tool_group';
+  }
+
+  function isRawTextBlock(block: MessageBlock): boolean {
+      const kind = (block.kind || '').trim().toLowerCase();
+      return kind === 'function_call'
+          || kind === 'function_call_output'
+          || kind === 'tool_use'
+          || kind === 'tool_result';
+  }
+
+  function getToolGroupSummary(block: MessageBlock): string {
+      const runCount = block.runCount ?? block.blocks?.length ?? 0;
+      return `Ran ${runCount} ${runCount === 1 ? 'command' : 'commands'}`;
+  }
+
+  function getToolGroupChildren(block: MessageBlock): MessageBlock[] {
+      return block.blocks ?? [];
+  }
+
+  function getToolDetailNumber(block: MessageBlock): string {
+      if (block.seqStart === block.seqEnd) {
+          return `#${block.seqStart + 1}`;
+      }
+
+      return `#${block.seqStart + 1}-${block.seqEnd + 1}`;
   }
 
   function scrollActiveSearchMatchIntoView() {
@@ -1860,6 +1935,10 @@
       } as Record<string, string>)[providerId] ?? providerId;
   }
 
+  function formatConversationSessionId(sessionId: string): string {
+      return `(#${sessionId})`;
+  }
+
   function formatBytes(bytes?: number): string {
       if (!bytes || bytes <= 0) return '0 B';
       const units = ['B', 'KB', 'MB', 'GB'];
@@ -2026,14 +2105,17 @@
                    <h3>No conversations</h3>
                </div>
             {:else}
-               {#each conversations as conv}
-                   <button class="conversation-item" onclick={() => selectConversation(conv.session_id, conv.source_type)} type="button">
-                       <div class="conversation-title">{conv.title}</div>
-                       <div class="conversation-meta">
-                           <span class="meta-item">{@html getIcon('conversation', 12)} {conv.message_count} messages</span>
-                           <span class="meta-item">{@html getIcon('clock', 12)} {conv.date}</span>
-                       </div>
-                   </button>
+                {#each conversations as conv}
+                    <button class="conversation-item" onclick={() => selectConversation(conv.session_id, conv.source_type)} type="button">
+                        <div class="conversation-title">
+                            <span>{conv.title}</span>
+                            <span class="conversation-session-id">{formatConversationSessionId(conv.session_id)}</span>
+                        </div>
+                        <div class="conversation-meta">
+                            <span class="meta-item">{@html getIcon('conversation', 12)} {conv.message_count} messages</span>
+                            <span class="meta-item">{@html getIcon('clock', 12)} {conv.date}</span>
+                        </div>
+                    </button>
                {/each}
             {/if}
          </div>
@@ -2147,7 +2229,60 @@
                 </div>
                 <div class="messages-container">
                     {#each getVisibleConversationBlocks(currentConversation.blocks) as block, i}
-                        {#if isCollapsibleBlock(block)}
+                        {#if isToolGroupBlock(block)}
+                            <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
+                                <summary class="tool-group-summary">
+                                    <div class="tool-group-summary-main">
+                                        <div class="tool-group-summary-copy">
+                                            <span class="tool-group-title">{getToolGroupSummary(block)}</span>
+                                            {#if block.timestamp}
+                                                <span class="message-ts">{block.timestamp}</span>
+                                            {/if}
+                                        </div>
+                                    </div>
+                                </summary>
+                                <div class="tool-group-body">
+                                    {#each getToolGroupChildren(block) as toolBlock}
+                                        <details class={`message message-collapsible message-in-tool-group ${getMessageBlockClass(toolBlock)}`}>
+                                            <summary class="message-header">
+                                                <div class="message-header-main">
+                                                    <span class="message-role">{getMessageBlockLabel(toolBlock)}</span>
+                                                    <span class="message-number">{getToolDetailNumber(toolBlock)}</span>
+                                                    {#if toolBlock.name}
+                                                        <span class="tool-call-name">{toolBlock.name}</span>
+                                                    {/if}
+                                                </div>
+                                                <div class="message-header-side">
+                                                    {#if toolBlock.timestamp}
+                                                        <span class="message-ts">{toolBlock.timestamp}</span>
+                                                    {/if}
+                                                </div>
+                                            </summary>
+                                            <div class="message-collapsible-body">
+                                                <div class="message-collapsible-meta-row">
+                                                    {#if toolBlock.callId}
+                                                        <div class="tool-call-meta">Call ID: {toolBlock.callId}</div>
+                                                    {/if}
+                                                    <button
+                                                        class="inline-icon-btn"
+                                                        onclick={() => copyText(toolBlock.content, 'Message copied')}
+                                                        type="button"
+                                                        title="Copy message"
+                                                    >
+                                                        {@html getIcon('copy', 14)}
+                                                    </button>
+                                                </div>
+                                                {#if isRawTextBlock(toolBlock)}
+                                                    <pre class="message-content message-raw-content">{toolBlock.content}</pre>
+                                                {:else}
+                                                    <Markdown content={toolBlock.content} />
+                                                {/if}
+                                            </div>
+                                        </details>
+                                    {/each}
+                                </div>
+                            </details>
+                        {:else if isCollapsibleBlock(block)}
                             <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
                                 <summary class="message-header">
                                     <div class="message-header-main">
@@ -2161,7 +2296,6 @@
                                         {#if block.timestamp}
                                             <span class="message-ts">{block.timestamp}</span>
                                         {/if}
-                                        <span class="message-expand-hint">Expand</span>
                                     </div>
                                 </summary>
                                 <div class="message-collapsible-body">
@@ -2178,7 +2312,11 @@
                                             {@html getIcon('copy', 14)}
                                         </button>
                                     </div>
-                                    <Markdown content={block.content} />
+                                    {#if isRawTextBlock(block)}
+                                        <pre class="message-content message-raw-content">{block.content}</pre>
+                                    {:else}
+                                        <Markdown content={block.content} />
+                                    {/if}
                                 </div>
                             </details>
                         {:else}
@@ -2291,7 +2429,10 @@
           <div class="search-modal-results" id="searchModalResults">
               {#each searchResults as result}
                   <button class="conversation-item" onclick={() => handleSearchResultClick(result)} type="button">
-                      <div class="conversation-title">{result.title}</div>
+                      <div class="conversation-title">
+                          <span>{result.title}</span>
+                          <span class="conversation-session-id">{formatConversationSessionId(result.session_id)}</span>
+                      </div>
                       {#if result.snippet}
                           <div class="conversation-snippet search-snippet">{@html result.snippet}</div>
                       {/if}
