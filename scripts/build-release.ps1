@@ -144,67 +144,12 @@ function Ensure-NsisOnPath {
   }
 }
 
-function Get-PreviousReleaseTag {
-  param(
-    [string]$CurrentVersion
+function Get-ReleaseNotesChangesTemplate {
+  return @(
+    '- TODO: Summarize the major user-facing changes in this release.',
+    '- TODO: List the most important fixes or behavior changes.',
+    '- TODO: Mention deployment or packaging changes if they matter to users.'
   )
-
-  $currentParsedVersion = $null
-  if (-not [Version]::TryParse($CurrentVersion, [ref]$currentParsedVersion)) {
-    throw "Invalid release version: $CurrentVersion"
-  }
-
-  $tags = git tag --list 'v*' --sort=-version:refname
-  if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to inspect git tags for release notes.'
-  }
-
-  foreach ($tag in $tags) {
-    if (-not $tag) {
-      continue
-    }
-
-    $tagVersion = $tag.TrimStart('v')
-    $parsedTagVersion = $null
-    if (-not [Version]::TryParse($tagVersion, [ref]$parsedTagVersion)) {
-      continue
-    }
-    if ($parsedTagVersion -lt $currentParsedVersion) {
-      return $tag
-    }
-  }
-
-  return $null
-}
-
-function Get-ReleaseNotesChanges {
-  param(
-    [string]$CurrentVersion
-  )
-
-  $previousTag = Get-PreviousReleaseTag -CurrentVersion $CurrentVersion
-  $range = if ($previousTag) { "$previousTag..HEAD" } else { 'HEAD' }
-  $subjects = git log $range --pretty=format:%s
-  if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to collect git history for release notes.'
-  }
-
-  $filteredSubjects = @()
-  foreach ($subject in $subjects) {
-    if (-not $subject) {
-      continue
-    }
-    if ($subject -match '^chore\(release\):\s*') {
-      continue
-    }
-    $filteredSubjects += $subject
-  }
-
-  if ($filteredSubjects.Count -eq 0) {
-    return @('- No additional changes were recorded for this release.')
-  }
-
-  return $filteredSubjects | ForEach-Object { "- $_" }
 }
 
 function Get-ReleaseNotesVerification {
@@ -291,8 +236,8 @@ Invoke-Step -Name 'collect release artifacts' -Action {
 }
 
 $releaseNotesPath = Join-Path $releaseDir "release-notes-v$Version.md"
-Invoke-Step -Name 'generate release notes' -Action {
-  $changes = (Get-ReleaseNotesChanges -CurrentVersion $Version) -join [Environment]::NewLine
+Invoke-Step -Name 'generate release notes template' -Action {
+  $changes = (Get-ReleaseNotesChangesTemplate) -join [Environment]::NewLine
   $verification = (Get-ReleaseNotesVerification) -join [Environment]::NewLine
   $releaseNotes = @"
 # v$Version
