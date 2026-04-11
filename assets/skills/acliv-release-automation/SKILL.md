@@ -22,7 +22,8 @@ Drive the real release flow end to end for this project:
 1. verify release readiness
 2. sync version files
 3. build release artifacts
-4. optionally publish the GitHub Release
+4. summarize release notes in user-facing language
+5. optionally publish the GitHub Release
 
 Prefer executing the existing project scripts instead of reimplementing the workflow ad hoc.
 
@@ -100,6 +101,16 @@ Expected notes file:
 
 - `release-notes-v<version>.md`
 
+Before any real publish, review the notes file and make sure `## Changes` is a user-facing summary of the release:
+
+- summarize actual product or workflow changes
+- group related changes into a few clear bullets
+- do not paste raw commit subjects as the release notes body
+- do not leave placeholder `TODO` text in a published release
+- keep verification facts concrete and accurate
+
+If the generated notes are still template text, rewrite them before publish.
+
 ### 4. Publish only when asked
 
 Publishing creates tags and pushes to GitHub. Treat it as a real side effect.
@@ -108,6 +119,7 @@ Before publish, verify:
 
 - `gh auth status`
 - release artifacts exist in `release/v<version>/`
+- `release-notes-v<version>.md` has been rewritten into a real summary and is not just commit history or TODO placeholders
 - the user asked to actually publish, not just rehearse
 
 Then run:
@@ -123,6 +135,7 @@ Report:
 - version used
 - checks run
 - artifacts produced
+- whether release notes were reviewed and summarized
 - whether publish was executed or intentionally skipped
 - remaining blockers, if any
 
@@ -153,6 +166,7 @@ Desktop setup bundling needs `makensis`.
 
 - If the user asks to prepare a release or validate the release pipeline, run checks and build, but do not publish unless they explicitly ask.
 - If the user asks for a formal release, run checks, build if needed, then publish.
+- When preparing release notes, prefer concise feature summaries over commit-by-commit narration.
 - If scripts fail, repair the scripts first and rerun from the failing stage.
 - Prefer fixing root-cause automation issues over giving manual workaround steps.
 - Never delete user changes or reset the repo to make release easier.
@@ -203,6 +217,7 @@ Behavior:
 - verify current version is `1.0.4`
 - run checks
 - build if artifacts are missing or stale
+- rewrite release notes into a concise user-facing summary if needed
 - confirm `gh auth status`
 - publish via `scripts/publish-release.ps1`
 
