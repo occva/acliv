@@ -360,6 +360,7 @@ body {
 
 .index-status-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -398,6 +399,69 @@ body {
     color: #fff;
     background: var(--bg-active);
     border-color: var(--bg-active);
+}
+
+.index-switch-btn {
+    min-width: 148px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 6px 8px 6px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.index-switch-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
+    background: var(--bg-hover);
+}
+
+.index-switch-btn.active {
+    color: var(--text-primary);
+    border-color: rgba(88, 166, 255, 0.32);
+    background: rgba(88, 166, 255, 0.08);
+}
+
+.index-switch-label {
+    white-space: nowrap;
+}
+
+.index-switch-track {
+    width: 34px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.28);
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.2s ease;
+}
+
+.index-switch-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.24);
+    transition: transform 0.2s ease;
+}
+
+.index-switch-btn.active .index-switch-track {
+    background: var(--bg-active);
+}
+
+.index-switch-btn.active .index-switch-thumb {
+    transform: translateX(14px);
 }
 
 
@@ -665,8 +729,8 @@ body {
 
 .index-summary-hover {
     position: absolute;
-    top: 12px;
-    right: 14px;
+    top: 8px;
+    right: 10px;
 }
 
 .index-summary-hover-chip {
@@ -676,8 +740,8 @@ body {
     min-height: 24px;
     padding: 0 9px;
     border-radius: 999px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-primary);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(148, 163, 184, 0.14);
     color: var(--text-secondary);
     font-size: 11px;
     cursor: default;
@@ -1162,20 +1226,21 @@ body {
 .projects-list {
     display: flex;
     flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 14px;
 }
 
 .project-item {
-    padding: 10px var(--spacing-lg);
+    padding: 10px 12px;
     cursor: pointer;
-    border-left: 3px solid transparent;
-    border-top: none;
-    border-right: none;
-    border-bottom: none;
-    transition: all 0.15s;
+    border: none;
+    border-radius: 14px;
+    transition: background 0.15s ease, transform 0.15s ease;
     display: flex;
     align-items: center;
     justify-content: space-between;
     width: 100%;
+    gap: 10px;
     background: transparent;
     text-align: left;
     font: inherit;
@@ -1184,11 +1249,27 @@ body {
 
 .project-item:hover {
     background: var(--bg-hover);
+    transform: translateY(-1px);
 }
 
 .project-item.active {
     background: var(--bg-hover);
-    border-left-color: var(--accent-blue);
+}
+
+.project-item-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.project-item-icon {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
 }
 
 .project-name {
@@ -1200,6 +1281,7 @@ body {
 }
 
 .project-count {
+    flex-shrink: 0;
     font-size: 12px;
     color: var(--text-muted);
     background: var(--bg-tertiary);

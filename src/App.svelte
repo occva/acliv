@@ -13,6 +13,7 @@
     clock: `<path fill-rule="evenodd" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM2.5 8a5.5 5.5 0 1 1 11 0A5.5 5.5 0 0 1 2.5 8Zm6.25-2.75a.75.75 0 0 0-1.5 0V8c0 .2.08.39.22.53l1.75 1.75a.75.75 0 1 0 1.06-1.06L8.75 7.69V5.25Z"/>`,
     copy: `<path fill-rule="evenodd" d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v5.5A1.75 1.75 0 0 1 12.25 10h-5.5A1.75 1.75 0 0 1 5 8.25v-5.5Zm1.75-.25a.25.25 0 0 0-.25.25v5.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-5.5a.25.25 0 0 0-.25-.25h-5.5ZM2 5.75C2 4.784 2.784 4 3.75 4a.75.75 0 0 1 0 1.5.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h6.5a.25.25 0 0 0 .25-.25.75.75 0 0 1 1.5 0A1.75 1.75 0 0 1 10.25 14h-6.5A1.75 1.75 0 0 1 2 12.25v-6.5Z"/>`,
     terminal: `<path fill-rule="evenodd" d="M1.75 2A1.75 1.75 0 0 0 0 3.75v8.5C0 13.216.784 14 1.75 14h12.5A1.75 1.75 0 0 0 16 12.25v-8.5A1.75 1.75 0 0 0 14.25 2H1.75Zm0 1.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75Zm2.72 2.22a.75.75 0 0 1 1.06 0l1.75 1.75a.75.75 0 0 1 0 1.06L5.53 10.28a.75.75 0 1 1-1.06-1.06L5.69 8 4.47 6.78a.75.75 0 0 1 0-1.06ZM8 9.25a.75.75 0 0 1 .75-.75h2.75a.75.75 0 0 1 0 1.5H8.75A.75.75 0 0 1 8 9.25Z"/>`,
+    folderOutline: `<g transform="scale(0.015625)"><path d="M919.68 949.12H103.68a96 96 0 0 1-96-96V167.04a96 96 0 0 1 96-96H384a95.36 95.36 0 0 1 72.96 33.92l56.32 64a33.28 33.28 0 0 0 24.32 10.88h378.88a96 96 0 0 1 96.64 96v576a96 96 0 0 1-93.44 97.28zM103.68 135.04a32 32 0 0 0-32 32v686.08a32 32 0 0 0 32 32h816a32.64 32.64 0 0 0 32-32v-576a32 32 0 0 0-32-32H540.8a99.2 99.2 0 0 1-74.24-33.28l-56.32-64a33.92 33.92 0 0 0-26.24-12.8z" fill="currentColor"></path><path d="M945.28 374.4H78.08a32 32 0 1 1 0-64h867.2a32 32 0 0 1 0 64z" fill="currentColor"></path></g>`,
     folderOpen: `<path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v8.5C0 12.216.784 13 1.75 13h8.518a1.75 1.75 0 0 0 1.626-1.102l1.757-4.393A1.75 1.75 0 0 0 12.026 5H7.5a.25.25 0 0 1-.2-.1l-.9-1.2A1.75 1.75 0 0 0 5 3H1.75a.25.25 0 0 1-.25-.25v0A.25.25 0 0 1 1.75 2.5H5a.25.25 0 0 1 .2.1l.9 1.2A1.75 1.75 0 0 0 7.5 4h4.526a3.25 3.25 0 0 1 3.019 4.458l-1.757 4.394A3.25 3.25 0 0 1 10.268 15H1.75A1.75 1.75 0 0 1 0 13.25v-10.5A1.75 1.75 0 0 1 1.75 1Z"/>`,
     trash: `<path d="M6.5 1a1 1 0 0 0-.894.553L5.382 2H2.75a.75.75 0 0 0 0 1.5h.45l.632 9.49A1.75 1.75 0 0 0 5.577 14.5h4.846a1.75 1.75 0 0 0 1.745-1.51L12.8 3.5h.45a.75.75 0 0 0 0-1.5h-2.632l-.224-.447A1 1 0 0 0 9.5 1h-3Zm.276 1.5h2.448l.25.5h-2.948l.25-.5Zm-1.44 1.999h5.328l-.617 9.255a.25.25 0 0 1-.249.216H5.202a.25.25 0 0 1-.249-.216L4.336 4.5Zm1.414 1.25a.75.75 0 0 1 .75.75v4a.75.75 0 0 1-1.5 0v-4a.75.75 0 0 1 .75-.75Zm2.5 0a.75.75 0 0 1 .75.75v4a.75.75 0 0 1-1.5 0v-4a.75.75 0 0 1 .75-.75Z"/>`,
     search: `<path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>`,
@@ -123,6 +124,8 @@
   const AUTO_SYNC_INTERVAL_DESKTOP_MS = 300000;
   const DETAIL_SCROLL_STORAGE_PREFIX = 'acliv:detail-scroll:';
   const DETAIL_SCROLL_BOTTOM_THRESHOLD = 40;
+  const PROJECT_LIST_PATH_MODE_STORAGE_KEY = 'acliv:project-list-path-mode';
+  const SESSION_ID_VISIBILITY_STORAGE_KEY = 'acliv:show-session-ids';
 
   // ---- 适配函数 ----
   const GEMINI_GROUP = 'Gemini Sessions';
@@ -146,14 +149,23 @@
       second: '2-digit',
     }).format(new Date(ms));
   }
-  function sessionTitle(s: SessionMeta): string {
-    return s.title ?? s.summary ?? s.sessionId.slice(0, 8);
-  }
   function baseName(value?: string | null): string {
     if (!value?.trim()) return '';
     const normalized = value.trim().replace(/[\\/]+$/, '');
     const parts = normalized.split(/[\\/]/).filter(Boolean);
     return parts[parts.length - 1] ?? normalized;
+  }
+  function defaultSessionTitle(projectDir?: string | null): string {
+    return baseName(projectDir) || projectDir?.trim() || 'Conversation';
+  }
+  function sessionTitle(s: SessionMeta): string {
+    return s.title?.trim() || defaultSessionTitle(s.projectDir);
+  }
+  function indexedSessionTitle(item: IndexLibraryItem): string {
+    return item.title?.trim()
+      || item.projectName?.trim()
+      || item.project?.trim()
+      || 'Conversation';
   }
   function sessionDir(s: SessionMeta): string {
     if (s.projectDir && s.projectDir.trim()) return s.projectDir;
@@ -273,6 +285,8 @@
       query: string;
   } | null>(null);
   let hideFunctionCalls = $state(false);
+  let compactProjectPaths = $state(localStorage.getItem(PROJECT_LIST_PATH_MODE_STORAGE_KEY) !== 'full');
+  let showSessionIds = $state(localStorage.getItem(SESSION_ID_VISIBILITY_STORAGE_KEY) !== 'hidden');
   let isSourceDropdownOpen = $state(false);
   let theme = $state(localStorage.getItem('theme') || 'dark');
   let isLoading = $state(false);
@@ -1622,6 +1636,14 @@
   function toggleHideFunctionCalls() {
       hideFunctionCalls = !hideFunctionCalls;
   }
+  function toggleCompactProjectPaths() {
+      compactProjectPaths = !compactProjectPaths;
+      localStorage.setItem(PROJECT_LIST_PATH_MODE_STORAGE_KEY, compactProjectPaths ? 'compact' : 'full');
+  }
+  function toggleShowSessionIds() {
+      showSessionIds = !showSessionIds;
+      localStorage.setItem(SESSION_ID_VISIBILITY_STORAGE_KEY, showSessionIds ? 'shown' : 'hidden');
+  }
   function selectSource(source: string) {
       if (currentSource === source) {
           isSourceDropdownOpen = false;
@@ -1939,6 +1961,11 @@
       return `(#${sessionId})`;
   }
 
+  function getProjectListLabel(projectPath: string): string {
+      if (!compactProjectPaths) return projectPath;
+      return baseName(projectPath) || projectPath;
+  }
+
   function formatBytes(bytes?: number): string {
       if (!bytes || bytes <= 0) return '0 B';
       const units = ['B', 'KB', 'MB', 'GB'];
@@ -2065,9 +2092,15 @@
                 <button class="project-item" 
                      class:active={currentProject === project.name}
                      data-project={project.name}
+                     title={compactProjectPaths ? project.name : undefined}
                      onclick={() => selectProject(project.name)}
                      type="button">
-                    <span class="project-name">{project.name}</span>
+                    <span class="project-item-main">
+                        <span class="project-item-icon" aria-hidden="true">
+                            {@html getIcon('folderOutline', 15)}
+                        </span>
+                        <span class="project-name">{getProjectListLabel(project.name)}</span>
+                    </span>
                     <span class="project-count">{project.conversation_count}</span>
                 </button>
             {/each}
@@ -2109,7 +2142,9 @@
                     <button class="conversation-item" onclick={() => selectConversation(conv.session_id, conv.source_type)} type="button">
                         <div class="conversation-title">
                             <span>{conv.title}</span>
-                            <span class="conversation-session-id">{formatConversationSessionId(conv.session_id)}</span>
+                            {#if showSessionIds}
+                                <span class="conversation-session-id">{formatConversationSessionId(conv.session_id)}</span>
+                            {/if}
                         </div>
                         <div class="conversation-meta">
                             <span class="meta-item">{@html getIcon('conversation', 12)} {conv.message_count} messages</span>
@@ -2126,7 +2161,7 @@
              <button class="btn-secondary" id="backBtn" onclick={() => goToConversationList()} type="button">
                  {@html ICONS.back} Back
              </button>
-             <h2>{currentConversation?.title || 'Conversation'}</h2>
+              <h2>{selectedSession ? sessionTitle(selectedSession) : currentConversation?.title || 'Conversation'}</h2>
              {#if currentConversation}
                  <div class="view-header-actions">
                      <button class="action-btn" onclick={openSearch} type="button">
@@ -2159,9 +2194,11 @@
         >
             {#if currentConversation}
                 <div class="conversation-header">
-                    <h3>{currentConversation.title}</h3>
+                    <h3>{selectedSession ? sessionTitle(selectedSession) : currentConversation.title}</h3>
                     <div class="conversation-info">
-                        <span>{@html getIcon('message', 12)} ID: {currentConversation.session_id}</span>
+                        {#if showSessionIds}
+                            <span>{@html getIcon('message', 12)} ID: {currentConversation.session_id}</span>
+                        {/if}
                         <span>{@html getIcon('clock', 12)} {currentConversation.timestamp || 'N/A'}</span>
                         {#if selectedSession?.projectDir}
                             <div class="menu-anchor project-menu-anchor">
@@ -2431,7 +2468,9 @@
                   <button class="conversation-item" onclick={() => handleSearchResultClick(result)} type="button">
                       <div class="conversation-title">
                           <span>{result.title}</span>
-                          <span class="conversation-session-id">{formatConversationSessionId(result.session_id)}</span>
+                          {#if showSessionIds}
+                              <span class="conversation-session-id">{formatConversationSessionId(result.session_id)}</span>
+                          {/if}
                       </div>
                       {#if result.snippet}
                           <div class="conversation-snippet search-snippet">{@html result.snippet}</div>
@@ -2560,8 +2599,44 @@
                       <button class="index-action-btn" type="button" onclick={() => runSearchIndexAction('rebuild')} disabled={isIndexActionRunning}>
                           Rebuild
                       </button>
-                      <button class="index-action-btn" class:active={hideFunctionCalls} type="button" onclick={toggleHideFunctionCalls}>
-                          Hide function_call
+                      <button
+                          class="index-switch-btn"
+                          class:active={compactProjectPaths}
+                          type="button"
+                          role="switch"
+                          aria-checked={compactProjectPaths}
+                          onclick={toggleCompactProjectPaths}
+                      >
+                          <span class="index-switch-label">仅末级目录</span>
+                          <span class="index-switch-track" aria-hidden="true">
+                              <span class="index-switch-thumb"></span>
+                          </span>
+                      </button>
+                      <button
+                          class="index-switch-btn"
+                          class:active={hideFunctionCalls}
+                          type="button"
+                          role="switch"
+                          aria-checked={hideFunctionCalls}
+                          onclick={toggleHideFunctionCalls}
+                      >
+                          <span class="index-switch-label">隐藏工具调用</span>
+                          <span class="index-switch-track" aria-hidden="true">
+                              <span class="index-switch-thumb"></span>
+                          </span>
+                      </button>
+                      <button
+                          class="index-switch-btn"
+                          class:active={showSessionIds}
+                          type="button"
+                          role="switch"
+                          aria-checked={showSessionIds}
+                          onclick={toggleShowSessionIds}
+                      >
+                          <span class="index-switch-label">会话 ID</span>
+                          <span class="index-switch-track" aria-hidden="true">
+                              <span class="index-switch-thumb"></span>
+                          </span>
                       </button>
                   </div>
               </div>
@@ -2615,7 +2690,7 @@
                           {#each indexLibraryItems as item}
                               <button class="index-library-item" type="button" onclick={() => handleIndexSessionClick(item)}>
                                   <div class="index-library-item-top">
-                                      <strong>{item.title || item.sessionId}</strong>
+                                      <strong>{indexedSessionTitle(item)}</strong>
                                       <span class="index-provider-pill">{providerDisplayName(item.providerId)}</span>
                                   </div>
                                   <div class="index-library-meta">
@@ -2684,7 +2759,9 @@
           </p>
           {#if deleteTarget}
               <div class="confirm-meta">
-                  <span>ID: {deleteTarget.sessionId}</span>
+                  {#if showSessionIds}
+                      <span>ID: {deleteTarget.sessionId}</span>
+                  {/if}
                   <span>Provider: {deleteTarget.providerId}</span>
               </div>
           {/if}
@@ -2704,4 +2781,3 @@
 <style>
   /* All styles come from public/css/style.css */
 </style>
-
