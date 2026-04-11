@@ -194,14 +194,14 @@ function Get-ReleaseNotesChanges {
     if (-not $subject) {
       continue
     }
-    if ($subject -match '^chore\(release\):\s*同步版本号到\s+') {
+    if ($subject -match '^chore\(release\):\s*') {
       continue
     }
     $filteredSubjects += $subject
   }
 
   if ($filteredSubjects.Count -eq 0) {
-    return @('- 本版本未记录额外代码变更说明。')
+    return @('- No additional changes were recorded for this release.')
   }
 
   return $filteredSubjects | ForEach-Object { "- $_" }
@@ -209,9 +209,9 @@ function Get-ReleaseNotesChanges {
 
 function Get-ReleaseNotesVerification {
   return @(
-    '- 已执行 `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`',
-    '- 已执行 `npm run tauri build`',
-    '- 已生成标准发布产物并收集到 `release/` 目录'
+    '- Ran `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`',
+    '- Ran `npm run tauri build`',
+    '- Collected standard release artifacts into the `release/` directory'
   )
 }
 
