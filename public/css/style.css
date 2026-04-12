@@ -1575,8 +1575,165 @@ body {
 .conversation-detail {
     flex: 1;
     overflow-y: auto;
-    padding: var(--spacing-xl);
+    padding: var(--spacing-xl) calc(var(--spacing-xl) + 44px) var(--spacing-xl) var(--spacing-xl);
     scroll-behavior: smooth;
+}
+
+.detail-progress-nav {
+    position: fixed;
+    top: 148px;
+    right: 12px;
+    transform: none;
+    width: 28px;
+    min-height: 28px;
+    z-index: 1050;
+    pointer-events: auto;
+    overflow: visible;
+    transition: width 0.18s ease;
+}
+
+.detail-progress-nav.expanded {
+    width: 348px;
+}
+
+.detail-progress-anchor {
+    position: absolute;
+    right: 0;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 2px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.42);
+    box-shadow: none;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: width 0.18s ease, background 0.18s ease, opacity 0.18s ease, height 0.18s ease;
+}
+
+.detail-progress-anchor:hover,
+.detail-progress-anchor:focus-visible {
+    width: 24px;
+    background: rgba(71, 85, 105, 0.78);
+}
+
+.detail-progress-anchor.active {
+    width: 24px;
+    height: 3px;
+    background: rgba(31, 41, 55, 0.9);
+}
+
+.detail-progress-directory {
+    position: absolute;
+    top: 0;
+    right: 34px;
+    transform: translateX(10px);
+    width: 300px;
+    max-height: min(72vh, 620px);
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 16px;
+    background: rgba(22, 27, 34, 0.96);
+    color: var(--text-primary);
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+}
+
+.detail-progress-nav:hover .detail-progress-directory,
+.detail-progress-nav:focus-within .detail-progress-directory {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(0);
+}
+
+.detail-progress-directory-title {
+    margin-bottom: 8px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+.detail-progress-directory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: calc(min(72vh, 620px) - 44px);
+    overflow-y: auto;
+    padding-right: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+    scrollbar-gutter: stable;
+}
+
+.detail-progress-directory-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.detail-progress-directory-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.detail-progress-directory-list::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.42);
+    border-radius: 999px;
+}
+
+.detail-progress-directory-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.58);
+}
+
+.detail-progress-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 9px;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+
+.detail-progress-item:hover,
+.detail-progress-item:focus-visible {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.detail-progress-item.active {
+    background: rgba(59, 130, 246, 0.1);
+    color: #1d4ed8;
+}
+
+.detail-progress-item-line {
+    flex: 0 0 18px;
+    height: 2px;
+    margin-top: 8px;
+    border-radius: 999px;
+    background: rgba(138, 138, 138, 0.32);
+}
+
+.detail-progress-item.active .detail-progress-item-line {
+    background: currentColor;
+}
+
+.detail-progress-item-label {
+    min-width: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
 }
 
 .detail-refresh-fab {
@@ -2244,6 +2401,36 @@ body {
     background: rgba(0, 0, 0, 0.08);
 }
 
+[data-theme="light"] .detail-progress-anchor {
+    background: rgba(148, 163, 184, 0.5);
+}
+
+[data-theme="light"] .detail-progress-anchor:hover,
+[data-theme="light"] .detail-progress-anchor:focus-visible {
+    background: rgba(71, 85, 105, 0.72);
+}
+
+[data-theme="light"] .detail-progress-anchor.active {
+    background: rgba(31, 41, 55, 0.92);
+}
+
+[data-theme="light"] .detail-progress-directory {
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] .detail-progress-directory-list {
+    scrollbar-color: rgba(100, 116, 139, 0.38) transparent;
+}
+
+[data-theme="light"] .detail-progress-directory-list::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.34);
+}
+
+[data-theme="light"] .detail-progress-directory-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.5);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
     width: 8px;
@@ -2284,11 +2471,41 @@ body {
         width: 100%;
     }
 
+    .detail-progress-nav {
+        top: 108px;
+        right: 10px;
+        width: 24px;
+        min-height: 24px;
+    }
+
+    .detail-progress-nav.expanded {
+        width: 24px;
+    }
+
+    .detail-progress-anchor {
+        width: 16px;
+        height: 2px;
+    }
+
+    .detail-progress-anchor:hover,
+    .detail-progress-anchor:focus-visible,
+    .detail-progress-anchor.active {
+        width: 18px;
+    }
+
+    .detail-progress-directory {
+        display: none;
+    }
+
     .detail-refresh-fab {
         right: 16px;
         bottom: 16px;
         width: 44px;
         height: 44px;
+    }
+
+    .conversation-detail {
+        padding: var(--spacing-lg);
     }
 }
 

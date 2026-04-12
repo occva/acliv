@@ -1,7 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { Marked } from 'marked';
-  import hljs from 'highlight.js';
+  import hljs from 'highlight.js/lib/common';
+  import powershell from 'highlight.js/lib/languages/powershell';
+  import dos from 'highlight.js/lib/languages/dos';
   import DOMPurify from 'dompurify';
 
   let { content = "" } = $props<{ content: string }>();
@@ -14,6 +16,11 @@
   let container: HTMLDivElement | undefined;
   let mermaidApi: MermaidModule['default'] | null = null;
   let renderToken = 0;
+
+  hljs.registerLanguage('powershell', powershell);
+  hljs.registerLanguage('dos', dos);
+  hljs.registerAliases(['ps', 'ps1', 'pwsh'], { languageName: 'powershell' });
+  hljs.registerAliases(['bat', 'cmd'], { languageName: 'dos' });
 
   function escapeHtml(text: string): string {
     return text

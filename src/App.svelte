@@ -2,7 +2,6 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import * as api from './lib/api';
-  import Markdown from './lib/components/Markdown.svelte';
 
   // --- Icons from Legacy app.js ---
   const ICONS = {
@@ -110,6 +109,7 @@
   type IndexModalTab = 'overview' | 'sessions';
   type IndexLibraryItem = api.IndexedSession;
   type RouteMode = 'push' | 'replace' | 'none';
+  type MarkdownComponentType = typeof import('./lib/components/Markdown.svelte').default;
   interface SelectConversationOptions {
       routeMode?: RouteMode;
       restoreScroll?: boolean;
@@ -119,11 +119,19 @@
       top: number;
       atBottom: boolean;
   }
+  interface ConversationProgressAnchor {
+      key: string;
+      label: string;
+      preview: string;
+      top: number;
+  }
   const INDEX_LIBRARY_PAGE_SIZE = 50;
   const AUTO_SYNC_INTERVAL_WEB_MS = 120000;
   const AUTO_SYNC_INTERVAL_DESKTOP_MS = 300000;
   const DETAIL_SCROLL_STORAGE_PREFIX = 'acliv:detail-scroll:';
   const DETAIL_SCROLL_BOTTOM_THRESHOLD = 40;
+  const DETAIL_PROGRESS_ANCHOR_OFFSET = 10;
+  const DETAIL_PROGRESS_ANCHOR_SPACING = 14;
   const PROJECT_LIST_PATH_MODE_STORAGE_KEY = 'acliv:project-list-path-mode';
   const SESSION_ID_VISIBILITY_STORAGE_KEY = 'acliv:show-session-ids';
 
@@ -302,6 +310,7 @@
   let showToast = $state(false);
   let toastType = $state<'syncing' | 'success' | 'error'>('syncing');
   let toastMessage = $state('History Updated');
+  let MarkdownComponent = $state<MarkdownComponentType | null>(null);
   let deleteTarget = $state<SessionMeta | null>(null);
   let isProjectMenuOpen = $state(false);
   let isConversationRefreshing = $state(false);
@@ -316,11 +325,19 @@
   let autoRefreshInterval: any;
   let searchTimer: any;
   let watcherReloadTimer: any;
+  let markdownRendererPromise: Promise<MarkdownComponentType | null> | null = null;
   let searchIndexEventUnsubscribers: Array<() => void> = [];
   let watcherReloadRunning = false;
   let watcherReloadQueued = false;
   let pendingWatcherSources = new Map<string, api.IndexedSourceRef>();
   let conversationDetailElement = $state<HTMLDivElement | null>(null);
+  let conversationHeaderElement = $state<HTMLDivElement | null>(null);
+  let messagesContainerElement = $state<HTMLDivElement | null>(null);
+  let conversationProgressAnchors = $state<ConversationProgressAnchor[]>([]);
+  let activeConversationProgressKey = $state<string | null>(null);
+  let isConversationProgressExpanded = $state(false);
+  let conversationProgressResizeObserver: ResizeObserver | null = null;
+  let conversationProgressFrame = 0;
 
   async function refreshWebAuthState(): Promise<boolean> {
     if (!isWebMode) return true;
@@ -347,6 +364,25 @@
     await loadData();
     await syncConversationFromRoute();
     void bootstrapSearchIndex();
+  }
+
+  function loadMarkdownRenderer(): Promise<MarkdownComponentType | null> {
+    if (MarkdownComponent) {
+      return Promise.resolve(MarkdownComponent);
+    }
+    if (!markdownRendererPromise) {
+      markdownRendererPromise = import('./lib/components/Markdown.svelte')
+        .then((module) => {
+          MarkdownComponent = module.default;
+          return module.default;
+        })
+        .catch((error) => {
+          console.error('Failed to load Markdown renderer:', error);
+          markdownRendererPromise = null;
+          return null;
+        });
+    }
+    return markdownRendererPromise;
   }
 
   async function handleLoginSubmit() {
@@ -463,38 +499,36 @@
     await tick();
 
     if (!conversationDetailElement) return;
+    syncConversationProgressObserverTargets();
 
     if (options.highlightSearchMatch) {
       scrollActiveSearchMatchIntoView();
-      return;
-    }
-
-    if (options.scrollToBottom) {
+    } else if (options.scrollToBottom) {
       conversationDetailElement.scrollTo({
         top: conversationDetailElement.scrollHeight,
         behavior: 'auto',
       });
       persistConversationScrollState(target);
-      return;
+    } else if (options.restoreScroll) {
+      const saved = readConversationScrollState(target);
+      if (saved) {
+        const maxScrollTop = Math.max(
+          0,
+          conversationDetailElement.scrollHeight - conversationDetailElement.clientHeight,
+        );
+        conversationDetailElement.scrollTop = saved.atBottom
+          ? maxScrollTop
+          : Math.min(Math.max(saved.top, 0), maxScrollTop);
+      }
     }
 
-    if (!options.restoreScroll) return;
-
-    const saved = readConversationScrollState(target);
-    if (!saved) return;
-
-    const maxScrollTop = Math.max(
-      0,
-      conversationDetailElement.scrollHeight - conversationDetailElement.clientHeight,
-    );
-    conversationDetailElement.scrollTop = saved.atBottom
-      ? maxScrollTop
-      : Math.min(Math.max(saved.top, 0), maxScrollTop);
+    scheduleConversationProgressUpdate();
   }
 
   function handleConversationDetailScroll() {
     if (currentView !== 'detail') return;
     persistConversationScrollState();
+    updateConversationProgressActiveAnchor();
   }
 
   function syncConversationContext(target: SessionMeta) {
@@ -514,6 +548,8 @@
     persistConversationScrollState();
     isProjectMenuOpen = false;
     activeSearchMatch = null;
+    clearConversationProgress();
+    conversationProgressResizeObserver?.disconnect();
     currentView = 'list';
 
     if (routeMode !== 'none') {
@@ -772,6 +808,7 @@
 
   onMount(async () => {
     setTheme(theme);
+    void loadMarkdownRenderer();
     if (isWebMode) {
       await refreshWebAuthState();
       if (isAuthenticated) {
@@ -796,6 +833,8 @@
     if (autoRefreshInterval) clearInterval(autoRefreshInterval);
     if (searchTimer) clearTimeout(searchTimer);
     if (watcherReloadTimer) clearTimeout(watcherReloadTimer);
+    if (conversationProgressFrame) cancelAnimationFrame(conversationProgressFrame);
+    conversationProgressResizeObserver?.disconnect();
     countJobToken++;
     for (const unlisten of searchIndexEventUnsubscribers) {
       unlisten();
@@ -1372,6 +1411,44 @@
           );
   }
 
+  function isConversationProgressBlock(block: MessageBlock): boolean {
+      if (block.kind !== 'message' || isInstructionContextBlock(block)) return false;
+      const role = block.role.toLowerCase();
+      return (role === 'user' || role === 'human') && !!getConversationProgressText(block.content);
+  }
+
+  function getConversationProgressKey(block: MessageBlock): string {
+      return `${block.role.toLowerCase()}:${block.seqStart}:${block.seqEnd}`;
+  }
+
+  function getConversationProgressText(content: string): string {
+      const normalized = content
+          .replace(/The user interrupted the previous turn on purpose\.[\s\S]*?verify current state before retrying\.\s*/gi, ' ')
+          .replace(/<turn_aborted>[\s\S]*?<\/turn_aborted>/gi, ' ')
+          .replace(/<turn_aborted>[\s\S]*$/gi, ' ')
+          .replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi, ' ')
+          .replace(/<image\b[^>]*\/?>/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      if (!normalized) return '';
+      if (/^the user interrupted the previous turn on purpose\b/i.test(normalized)) {
+          return '';
+      }
+
+      return normalized;
+  }
+
+  function getConversationProgressPreview(block: MessageBlock): string {
+      const normalized = getConversationProgressText(block.content);
+      if (!normalized) return '(empty)';
+      return Array.from(normalized).slice(0, 15).join('');
+  }
+
+  function getConversationProgressLabel(block: MessageBlock): string {
+      return getConversationProgressText(block.content) || '(empty)';
+  }
+
   function isCollapsibleBlock(block: MessageBlock): boolean {
       return block.kind !== 'message' || isInstructionContextBlock(block) || block.role.toLowerCase() === 'developer';
   }
@@ -1412,6 +1489,124 @@
               el.scrollIntoView({ block: 'center', behavior: 'smooth' });
           }
       }, 80);
+  }
+
+  function clearConversationProgress() {
+      conversationProgressAnchors = [];
+      activeConversationProgressKey = null;
+      isConversationProgressExpanded = false;
+  }
+
+  function scheduleConversationProgressUpdate() {
+      if (conversationProgressFrame) return;
+      conversationProgressFrame = requestAnimationFrame(() => {
+          conversationProgressFrame = 0;
+          updateConversationProgressAnchors();
+      });
+  }
+
+  function syncConversationProgressObserverTargets() {
+      if (typeof ResizeObserver === 'undefined') return;
+
+      if (!conversationProgressResizeObserver) {
+          conversationProgressResizeObserver = new ResizeObserver(() => {
+              scheduleConversationProgressUpdate();
+          });
+      }
+
+      conversationProgressResizeObserver.disconnect();
+      if (conversationDetailElement) {
+          conversationProgressResizeObserver.observe(conversationDetailElement);
+      }
+      if (conversationHeaderElement) {
+          conversationProgressResizeObserver.observe(conversationHeaderElement);
+      }
+      if (messagesContainerElement) {
+          conversationProgressResizeObserver.observe(messagesContainerElement);
+      }
+  }
+
+  function getConversationAnchorOffset(element: HTMLElement): number {
+      if (!conversationDetailElement) return 0;
+      const containerRect = conversationDetailElement.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      return elementRect.top - containerRect.top + conversationDetailElement.scrollTop;
+  }
+
+  function updateConversationProgressActiveAnchor(anchors: ConversationProgressAnchor[] = conversationProgressAnchors) {
+      if (!conversationDetailElement || anchors.length === 0) {
+          activeConversationProgressKey = null;
+          return;
+      }
+
+      const readingLine = conversationDetailElement.scrollTop
+          + Math.min(conversationDetailElement.clientHeight * 0.25, 120);
+      let activeKey = anchors[0].key;
+      for (const anchor of anchors) {
+          if (anchor.top <= readingLine) {
+              activeKey = anchor.key;
+              continue;
+          }
+          break;
+      }
+      activeConversationProgressKey = activeKey;
+  }
+
+  function updateConversationProgressAnchors() {
+      if (currentView !== 'detail' || !currentConversation || !conversationDetailElement) {
+          clearConversationProgress();
+          return;
+      }
+
+      const elements = Array.from(
+          conversationDetailElement.querySelectorAll<HTMLElement>('[data-progress-anchor="true"]'),
+      );
+      if (elements.length === 0) {
+          clearConversationProgress();
+          return;
+      }
+
+      const anchors = elements.map((element, index) => {
+          const top = getConversationAnchorOffset(element);
+          return {
+              key: element.dataset.progressKey || `anchor-${index}`,
+              label: element.dataset.progressLabel || element.dataset.progressPreview || 'User message',
+              preview: element.dataset.progressPreview || 'User message',
+              top,
+          };
+      });
+
+      conversationProgressAnchors = anchors;
+      updateConversationProgressActiveAnchor(anchors);
+  }
+
+  function jumpToConversationProgressAnchor(anchor: ConversationProgressAnchor) {
+      if (!conversationDetailElement) return;
+
+      activeConversationProgressKey = anchor.key;
+      conversationDetailElement.scrollTo({
+          top: Math.max(anchor.top - 16, 0),
+          behavior: 'smooth',
+      });
+  }
+
+  function getConversationProgressNavHeight(count: number): string {
+      const height = DETAIL_PROGRESS_ANCHOR_OFFSET * 2
+          + Math.max(count - 1, 0) * DETAIL_PROGRESS_ANCHOR_SPACING
+          + 8;
+      return `${height}px`;
+  }
+
+  function getConversationProgressAnchorTop(index: number): string {
+      return `${DETAIL_PROGRESS_ANCHOR_OFFSET + index * DETAIL_PROGRESS_ANCHOR_SPACING}px`;
+  }
+
+  function openConversationProgressDirectory() {
+      isConversationProgressExpanded = true;
+  }
+
+  function closeConversationProgressDirectory() {
+      isConversationProgressExpanded = false;
   }
 
   async function loadIndexedConversationMessages(target: SessionMeta): Promise<ConversationMessage[]> {
@@ -1492,6 +1687,7 @@
           seq: m.seq,
         })),
       };
+      void loadMarkdownRenderer();
       currentConversation = transformConversation(convLike as any);
       const matchRole = searchMatch?.match_role?.toLowerCase();
       const canHighlight = (matchRole === 'assistant' || matchRole === 'user' || matchRole === 'human')
@@ -2193,7 +2389,7 @@
             onscroll={handleConversationDetailScroll}
         >
             {#if currentConversation}
-                <div class="conversation-header">
+                <div class="conversation-header" bind:this={conversationHeaderElement}>
                     <h3>{selectedSession ? sessionTitle(selectedSession) : currentConversation.title}</h3>
                     <div class="conversation-info">
                         {#if showSessionIds}
@@ -2264,7 +2460,7 @@
                         </div>
                     {/if}
                 </div>
-                <div class="messages-container">
+                <div class="messages-container" bind:this={messagesContainerElement}>
                     {#each getVisibleConversationBlocks(currentConversation.blocks) as block, i}
                         {#if isToolGroupBlock(block)}
                             <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
@@ -2311,8 +2507,10 @@
                                                 </div>
                                                 {#if isRawTextBlock(toolBlock)}
                                                     <pre class="message-content message-raw-content">{toolBlock.content}</pre>
+                                                {:else if MarkdownComponent}
+                                                    <MarkdownComponent content={toolBlock.content} />
                                                 {:else}
-                                                    <Markdown content={toolBlock.content} />
+                                                    <pre class="message-content message-raw-content">{toolBlock.content}</pre>
                                                 {/if}
                                             </div>
                                         </details>
@@ -2351,13 +2549,22 @@
                                     </div>
                                     {#if isRawTextBlock(block)}
                                         <pre class="message-content message-raw-content">{block.content}</pre>
+                                    {:else if MarkdownComponent}
+                                        <MarkdownComponent content={block.content} />
                                     {:else}
-                                        <Markdown content={block.content} />
+                                        <pre class="message-content message-raw-content">{block.content}</pre>
                                     {/if}
                                 </div>
                             </details>
                         {:else}
-                            <div class={`message ${getMessageBlockClass(block)}`} class:search-hit={isBlockSearchMatch(block)}>
+                            <div
+                                class={`message ${getMessageBlockClass(block)}`}
+                                class:search-hit={isBlockSearchMatch(block)}
+                                data-progress-anchor={isConversationProgressBlock(block) ? 'true' : undefined}
+                                data-progress-key={isConversationProgressBlock(block) ? getConversationProgressKey(block) : undefined}
+                                data-progress-label={isConversationProgressBlock(block) ? getConversationProgressLabel(block) : undefined}
+                                data-progress-preview={isConversationProgressBlock(block) ? getConversationProgressPreview(block) : undefined}
+                            >
                                 <div class="message-header">
                                     <div class="message-header-main">
                                         <span class="message-role">{getMessageBlockLabel(block)}</span>
@@ -2380,7 +2587,11 @@
                                         </button>
                                     </div>
                                 </div>
-                                <Markdown content={block.content} />
+                                {#if MarkdownComponent}
+                                    <MarkdownComponent content={block.content} />
+                                {:else}
+                                    <pre class="message-content message-raw-content">{block.content}</pre>
+                                {/if}
                             </div>
                         {/if}
                     {/each}
@@ -2389,7 +2600,46 @@
         </div>
      </div>
 
-     {#if currentView === 'detail' && currentConversation}
+      {#if currentView === 'detail' && currentConversation}
+        {#if conversationProgressAnchors.length > 0}
+            <div
+                class="detail-progress-nav"
+                class:expanded={isConversationProgressExpanded}
+                style={`height: ${getConversationProgressNavHeight(conversationProgressAnchors.length)}`}
+                role="group"
+                aria-label="Conversation progress"
+                onmouseenter={openConversationProgressDirectory}
+                onmouseleave={closeConversationProgressDirectory}
+            >
+                {#each conversationProgressAnchors as anchor, index}
+                    <button
+                        class="detail-progress-anchor detail-progress-mark"
+                        class:active={anchor.key === activeConversationProgressKey}
+                        style={`top: ${getConversationProgressAnchorTop(index)}`}
+                        type="button"
+                        aria-label={anchor.label}
+                        onclick={() => jumpToConversationProgressAnchor(anchor)}
+                    ></button>
+                {/each}
+                <div class="detail-progress-directory">
+                    <div class="detail-progress-directory-title">用户目录</div>
+                    <div class="detail-progress-directory-list">
+                        {#each conversationProgressAnchors as anchor}
+                            <button
+                                class="detail-progress-item"
+                                class:active={anchor.key === activeConversationProgressKey}
+                                type="button"
+                                title={anchor.label}
+                                onclick={() => jumpToConversationProgressAnchor(anchor)}
+                            >
+                                <span class="detail-progress-item-line" aria-hidden="true"></span>
+                                <span class="detail-progress-item-label">{anchor.label}</span>
+                            </button>
+                        {/each}
+                    </div>
+                </div>
+            </div>
+        {/if}
         <button
             class="detail-refresh-fab"
             type="button"
