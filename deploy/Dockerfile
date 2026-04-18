@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG NODE_IMAGE=node:20-alpine
-ARG RUST_IMAGE=rust:1.83-alpine3.19
+ARG RUST_IMAGE=rust:1.85-alpine3.19
 ARG RUNTIME_IMAGE=alpine:3.19
 ARG CARGO_BUILD_JOBS
 

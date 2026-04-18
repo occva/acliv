@@ -7,6 +7,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional release version to backfill, for example 1.0.8 or v1.0.8"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -34,7 +39,12 @@ jobs:
         shell: bash
         run: |
           image="ghcr.io/occva/acliv"
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          manual_version="${{ inputs.version }}"
+          if [[ -n "${manual_version}" ]]; then
+            clean_version="${manual_version#v}"
+            version="v${clean_version}"
+            tags="${image}:${version},${image}:${clean_version},${image}:latest"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             version="${GITHUB_REF#refs/tags/}"
             clean_version="${version#v}"
             tags="${image}:${version},${image}:${clean_version},${image}:latest"
