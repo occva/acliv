@@ -1,6 +1,8 @@
 use rusqlite::Connection;
 
-const SEARCH_SCHEMA_VERSION: i32 = 1;
+use super::tokenizer;
+
+const SEARCH_SCHEMA_VERSION: i32 = 2;
 
 pub fn run_migrations(connection: &Connection) -> Result<(), String> {
     connection
@@ -174,17 +176,11 @@ pub fn run_migrations(connection: &Connection) -> Result<(), String> {
         "ALTER TABLE messages ADD COLUMN tool_names TEXT NOT NULL DEFAULT '[]'",
     )?;
 
-    connection
-        .execute(
-            r#"
-            UPDATE messages
-            SET search_text = content_text
-            WHERE COALESCE(search_text, '') = ''
-              AND COALESCE(kind, 'message') = 'message'
-            "#,
-            [],
-        )
-        .map_err(|e| format!("Failed to backfill messages.search_text: {e}"))?;
+    backfill_missing_search_text(connection)?;
+
+    if needs_search_text_rewrite(connection)? {
+        rewrite_all_search_text(connection)?;
+    }
 
     if needs_search_fts_rebuild(connection)? {
         recreate_search_fts(connection)?;
@@ -207,6 +203,10 @@ fn needs_search_fts_rebuild(connection: &Connection) -> Result<bool, String> {
     table_exists(connection, "messages_fts")
         .map(|exists| !exists)
         .map_err(|e| format!("Failed to inspect messages_fts existence: {e}"))
+}
+
+fn needs_search_text_rewrite(connection: &Connection) -> Result<bool, String> {
+    get_user_version(connection).map(|version| version < SEARCH_SCHEMA_VERSION)
 }
 
 fn get_user_version(connection: &Connection) -> Result<i32, String> {
@@ -276,6 +276,73 @@ fn recreate_search_fts(connection: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|e| format!("Failed to recreate messages FTS: {e}"))?;
+    Ok(())
+}
+
+fn backfill_missing_search_text(connection: &Connection) -> Result<(), String> {
+    let mut stmt = connection
+        .prepare(
+            r#"
+            SELECT id, content_text
+            FROM messages
+            WHERE COALESCE(search_text, '') = ''
+              AND COALESCE(kind, 'message') = 'message'
+            "#,
+        )
+        .map_err(|e| format!("Failed to prepare missing search_text query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| format!("Failed to query missing search_text rows: {e}"))?;
+
+    let pending = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to read missing search_text rows: {e}"))?;
+
+    for (id, content_text) in pending {
+        let search_text = tokenizer::normalize_search_text(&content_text);
+        connection
+            .execute(
+                "UPDATE messages SET search_text = ? WHERE id = ?",
+                rusqlite::params![search_text, id],
+            )
+            .map_err(|e| format!("Failed to backfill messages.search_text for row {id}: {e}"))?;
+    }
+
+    Ok(())
+}
+
+fn rewrite_all_search_text(connection: &Connection) -> Result<(), String> {
+    let mut stmt = connection
+        .prepare("SELECT id, kind, content_text FROM messages")
+        .map_err(|e| format!("Failed to prepare search_text rewrite query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| format!("Failed to query messages for search_text rewrite: {e}"))?;
+
+    let messages = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to read messages for search_text rewrite: {e}"))?;
+
+    for (id, kind, content_text) in messages {
+        let search_text = if kind == "message" {
+            tokenizer::normalize_search_text(&content_text)
+        } else {
+            String::new()
+        };
+        connection
+            .execute(
+                "UPDATE messages SET search_text = ? WHERE id = ?",
+                rusqlite::params![search_text, id],
+            )
+            .map_err(|e| format!("Failed to rewrite messages.search_text for row {id}: {e}"))?;
+    }
+
     Ok(())
 }
 

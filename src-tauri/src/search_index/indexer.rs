@@ -8,6 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use crate::session_manager::{self, SessionMeta};
 
 use super::status;
+use super::tokenizer;
 use super::types::{RebuildSearchIndexResult, RefreshSearchIndexResult};
 use super::{SyncProgress, SyncProgressPhase};
 
@@ -457,6 +458,7 @@ fn upsert_session_index(
         .map_err(|e| format!("Failed to prepare message insert statement: {e}"))?;
 
     for (index, message) in messages.iter().enumerate() {
+        let search_text = tokenizer::normalize_search_text(message.searchable_text());
         let tool_names = serde_json::to_string(&message.tool_names).map_err(|e| {
             format!(
                 "Failed to encode tool names for {}: {e}",
@@ -474,7 +476,7 @@ fn upsert_session_index(
                 message.name.as_deref(),
                 message.call_id.as_deref(),
                 message.content.as_str(),
-                message.searchable_text(),
+                search_text,
                 message.ts,
                 message.is_sidechain,
                 tool_names,

@@ -1,6 +1,6 @@
 [package]
 name = "acliv"
-version = "1.0.7"
+version = "1.0.8"
 description = "ACLIV - High Performance Desktop App"
 authors = ["Your Name"]
 license = "MIT"
@@ -28,6 +28,10 @@ name = "acliv-web"
 path = "src/bin/acliv-web.rs"
 required-features = ["web"]
 
+[[bin]]
+name = "search-benchmark"
+path = "src/bin/search-benchmark.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
 
@@ -43,6 +47,7 @@ log = "0.4"
 dirs = "5.0"
 regex = "1.11"
 chrono = { version = "0.4.44", features = ["serde"] }
+jieba-rs = "0.9.0"
 rand = "0.8"
 sha2 = "0.10"
 axum = { version = "0.7.9", optional = true }

@@ -3,6 +3,7 @@ mod indexer;
 mod query;
 mod schema;
 mod status;
+mod tokenizer;
 pub mod types;
 
 #[allow(dead_code)]
