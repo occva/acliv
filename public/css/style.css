@@ -464,6 +464,51 @@ body {
     transform: translateX(14px);
 }
 
+.index-locale-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    border-radius: 999px;
+}
+
+.index-locale-label {
+    padding-left: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.index-locale-segments {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.index-locale-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.index-locale-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.index-locale-btn.active {
+    color: #fff;
+    background: var(--bg-active);
+}
+
 
 
 /* Header Actions */
@@ -1194,12 +1239,13 @@ body {
 }
 
 .search-modal-results:empty::after {
-    content: "No results found";
-    display: block;
+    content: "";
+    display: none;
+}
+
+.search-empty-state {
     padding: var(--spacing-xl);
     text-align: center;
-    color: var(--text-muted);
-    font-size: 14px;
 }
 
 /* Projects Container */

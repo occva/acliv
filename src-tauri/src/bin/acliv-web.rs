@@ -43,12 +43,15 @@ struct ApiResult<T> {
 struct ApiErrorBody {
     ok: bool,
     error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
 }
 
 #[derive(Debug)]
 struct AppError {
     status: StatusCode,
     message: String,
+    code: Option<&'static str>,
 }
 
 impl AppError {
@@ -56,6 +59,7 @@ impl AppError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -63,6 +67,7 @@ impl AppError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            code: Some("request.bad_request"),
         }
     }
 
@@ -70,6 +75,7 @@ impl AppError {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
+            code: None,
         }
     }
 
@@ -77,7 +83,13 @@ impl AppError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
+            code: Some("request.internal_error"),
         }
+    }
+
+    fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
     }
 }
 
@@ -86,6 +98,7 @@ impl IntoResponse for AppError {
         let body = Json(ApiErrorBody {
             ok: false,
             error: self.message,
+            code: self.code,
         });
         (self.status, body).into_response()
     }
@@ -363,7 +376,10 @@ async fn login_auth(
     let username = payload.username.trim();
     let password = payload.password.trim();
     if username != state.auth_username || password != state.auth_password {
-        return Err(AppError::unauthorized("Invalid username or password"));
+        return Err(
+            AppError::unauthorized("Invalid username or password")
+                .with_code("auth.invalid_credentials"),
+        );
     }
 
     Ok(Json(ApiResult {
@@ -400,7 +416,9 @@ async fn require_auth(
         .unwrap_or(false);
 
     if !authorized {
-        return AppError::unauthorized("Unauthorized").into_response();
+        return AppError::unauthorized("Unauthorized")
+            .with_code("auth.missing_token")
+            .into_response();
     }
 
     next.run(request).await
@@ -692,14 +710,19 @@ async fn delete_session(
 
 fn validate_non_empty(label: &str, value: &str) -> Result<(), AppError> {
     if value.trim().is_empty() {
-        return Err(AppError::bad_request(format!("{label} is required")));
+        let code = if matches!(label, "username" | "password") {
+            "auth.missing_credentials"
+        } else {
+            "request.bad_request"
+        };
+        return Err(AppError::bad_request(format!("{label} is required")).with_code(code));
     }
     Ok(())
 }
 
 fn map_domain_error(message: String) -> AppError {
     if message.contains("outside provider root") {
-        AppError::forbidden(message)
+        AppError::forbidden(message).with_code("request.path_outside_provider_root")
     } else {
         AppError::bad_request(message)
     }

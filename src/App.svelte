@@ -2,6 +2,14 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import * as api from './lib/api';
+  import {
+    getInitialLocale,
+    setLocale as persistLocale,
+    translate,
+    type Locale,
+    type TranslationKey,
+    type TranslationParams,
+  } from './lib/i18n';
 
   // --- Icons from Legacy app.js ---
   const ICONS = {
@@ -89,6 +97,9 @@
       blocks?: MessageBlock[];
       runCount?: number;
   }
+  type UiMessage =
+      | { kind: 'key'; key: TranslationKey; params?: TranslationParams }
+      | { kind: 'text'; text: string };
   interface SearchIndexSyncEvent {
       phase: string;
       message?: string;
@@ -134,6 +145,45 @@
   const DETAIL_PROGRESS_ANCHOR_SPACING = 14;
   const PROJECT_LIST_PATH_MODE_STORAGE_KEY = 'acliv:project-list-path-mode';
   const SESSION_ID_VISIBILITY_STORAGE_KEY = 'acliv:show-session-ids';
+  let locale = $state<Locale>(getInitialLocale());
+
+  function t(key: TranslationKey, params?: TranslationParams): string {
+    return translate(locale, key, params);
+  }
+
+  function keyMessage(key: TranslationKey, params?: TranslationParams): UiMessage {
+    return { kind: 'key', key, params };
+  }
+
+  function textMessage(text: string): UiMessage {
+    return { kind: 'text', text };
+  }
+
+  function resolveMessage(message?: UiMessage | null): string {
+    if (!message) return '';
+    return message.kind === 'key' ? t(message.key, message.params) : message.text;
+  }
+
+  function uiMessageFromError(
+    error: unknown,
+    fallbackKey: TranslationKey = 'errors.request.internal_error',
+  ): UiMessage {
+    const key = api.getErrorTranslationKey(error);
+    if (key) {
+      return keyMessage(key);
+    }
+
+    if (error instanceof Error && error.message.trim()) {
+      return textMessage(error.message);
+    }
+
+    return keyMessage(fallbackKey);
+  }
+
+  function updateLocale(nextLocale: Locale) {
+    locale = nextLocale;
+    persistLocale(nextLocale);
+  }
 
   // ---- 适配函数 ----
   const GEMINI_GROUP = 'Gemini Sessions';
@@ -147,8 +197,8 @@
   };
 
   function formatTimestamp(ms?: number): string {
-    if (!ms) return 'N/A';
-    return new Intl.DateTimeFormat(undefined, {
+    if (!ms) return t('common.na');
+    return new Intl.DateTimeFormat(locale, {
       year: 'numeric',
       month: 'numeric',
       day: 'numeric',
@@ -164,7 +214,7 @@
     return parts[parts.length - 1] ?? normalized;
   }
   function defaultSessionTitle(projectDir?: string | null): string {
-    return baseName(projectDir) || projectDir?.trim() || 'Conversation';
+    return baseName(projectDir) || projectDir?.trim() || t('common.conversation');
   }
   function sessionTitle(s: SessionMeta): string {
     return s.title?.trim() || defaultSessionTitle(s.projectDir);
@@ -173,7 +223,7 @@
     return item.title?.trim()
       || item.projectName?.trim()
       || item.project?.trim()
-      || 'Conversation';
+      || t('common.conversation');
   }
   function sessionDir(s: SessionMeta): string {
     if (s.projectDir && s.projectDir.trim()) return s.projectDir;
@@ -303,13 +353,13 @@
   let isIndexActionRunning = $state(false);
   let searchIndexSyncInfo = $state<{
       phase: string;
-      message?: string;
+      message?: UiMessage;
       count: number;
       total: number;
   } | null>(null);
   let showToast = $state(false);
   let toastType = $state<'syncing' | 'success' | 'error'>('syncing');
-  let toastMessage = $state('History Updated');
+  let toastMessage = $state<UiMessage>(keyMessage('toast.history_updated'));
   let MarkdownComponent = $state<MarkdownComponentType | null>(null);
   let deleteTarget = $state<SessionMeta | null>(null);
   let isProjectMenuOpen = $state(false);
@@ -318,7 +368,7 @@
   let isAuthenticated = $state(!isWebMode);
   let loginUsername = $state('admin');
   let loginPassword = $state('');
-  let loginError = $state('');
+  let loginError = $state<UiMessage | null>(null);
   let isLoggingIn = $state(false);
 
   // Timers
@@ -347,14 +397,14 @@
       authInitialized = true;
       isAuthenticated = true;
       loginUsername = session.username || loginUsername;
-      loginError = '';
+      loginError = null;
       return true;
     } catch (e) {
       api.clearWebToken();
       authInitialized = true;
       isAuthenticated = false;
-      if (e instanceof Error && e.message !== 'Missing web token. Login required.') {
-        loginError = '';
+      if (api.getErrorCode(e) !== 'auth.missing_token') {
+        loginError = null;
       }
       return false;
     }
@@ -391,12 +441,12 @@
     const username = loginUsername.trim();
     const password = loginPassword.trim();
     if (!username || !password) {
-      loginError = '请输入用户名和密码';
+      loginError = keyMessage('errors.auth.missing_credentials');
       return;
     }
 
     isLoggingIn = true;
-    loginError = '';
+    loginError = null;
     try {
       const result = await api.loginWeb(username, password);
       api.setWebToken(result.token);
@@ -408,7 +458,7 @@
     } catch (e) {
       api.clearWebToken();
       isAuthenticated = false;
-      loginError = e instanceof Error ? e.message : '登录失败';
+      loginError = uiMessageFromError(e);
     } finally {
       isLoggingIn = false;
     }
@@ -589,7 +639,7 @@
       if (payload.phase === 'refreshing') {
         searchIndexSyncInfo = {
           phase: 'refreshing',
-          message: payload.message,
+          message: keyMessage('index.sync_message.refreshing'),
           count: payload.count ?? 0,
           total: payload.total ?? 0,
         };
@@ -599,7 +649,7 @@
       if (payload.phase === 'error') {
         searchIndexSyncInfo = null;
         toastType = 'error';
-        toastMessage = payload.message ?? 'Search index refresh failed';
+        toastMessage = payload.message ? textMessage(payload.message) : keyMessage('toast.index_refresh_failed');
         showToast = true;
         setTimeout(() => {
           showToast = false;
@@ -610,7 +660,7 @@
       if (payload.phase === 'scanning' || payload.phase === 'syncing') {
         searchIndexSyncInfo = {
           phase: payload.phase,
-          message: payload.message,
+          message: syncPhaseMessage(payload.phase) ?? (payload.message ? textMessage(payload.message) : undefined),
           count: payload.count ?? 0,
           total: payload.total ?? 0,
         };
@@ -621,7 +671,7 @@
 
       searchIndexSyncInfo = {
         phase: 'done',
-        message: 'Index is current',
+        message: keyMessage('toast.index_current'),
         count: payload.count ?? 0,
         total: payload.total ?? 0,
       };
@@ -759,12 +809,12 @@
     isIndexActionRunning = true;
     searchIndexSyncInfo = {
       phase: kind === 'refresh' ? 'syncing' : 'scanning',
-      message: kind === 'refresh' ? 'Refreshing search index' : 'Rebuilding search index',
+      message: kind === 'refresh' ? keyMessage('toast.refreshing_index') : keyMessage('toast.rebuilding_index'),
       count: 0,
       total: 0,
     };
     toastType = 'syncing';
-    toastMessage = kind === 'refresh' ? 'Refreshing index...' : 'Rebuilding index...';
+    toastMessage = kind === 'refresh' ? keyMessage('toast.refreshing_index') : keyMessage('toast.rebuilding_index');
     showToast = true;
 
     try {
@@ -785,10 +835,10 @@
         if (currentProject) void warmupMessageCounts(currentProject);
 
       toastType = 'success';
-      toastMessage = kind === 'refresh' ? 'Index refreshed' : 'Index rebuilt';
+      toastMessage = kind === 'refresh' ? keyMessage('toast.index_refreshed') : keyMessage('toast.index_rebuilt');
       searchIndexSyncInfo = {
         phase: 'done',
-        message: kind === 'refresh' ? 'Index refreshed' : 'Index rebuilt',
+        message: kind === 'refresh' ? keyMessage('toast.index_refreshed') : keyMessage('toast.index_rebuilt'),
         count: searchIndexStatus?.sessionsCount ?? 0,
         total: searchIndexStatus?.sessionsCount ?? 0,
       };
@@ -796,7 +846,7 @@
       console.error(`Failed to ${kind} search index:`, e);
       searchIndexSyncInfo = null;
       toastType = 'error';
-      toastMessage = kind === 'refresh' ? 'Index refresh failed' : 'Index rebuild failed';
+      toastMessage = kind === 'refresh' ? keyMessage('toast.index_refresh_failed') : keyMessage('toast.index_rebuild_failed');
     } finally {
       showToast = true;
       setTimeout(() => {
@@ -1035,12 +1085,11 @@
         const sessions = await loadSessionInventory(searchIndexReady);
         applyLoadedSessions(sessions);
     } catch (e) {
-        if (handleWebUnauthorized(e)) {
-            return;
-        }
-        console.error("Failed to load data:", e);
-        const message = e instanceof Error ? e.message : 'Failed to load data';
-        showFeedback(message, 'error');
+      if (handleWebUnauthorized(e)) {
+          return;
+      }
+      console.error("Failed to load data:", e);
+      showFeedback(uiMessageFromError(e), 'error');
     } finally {
         isLoading = false;
     }
@@ -1050,7 +1099,7 @@
       if (isLoading || isRefreshing) return;
       isRefreshing = true;
       toastType = 'syncing';
-      toastMessage = 'Syncing history...';
+      toastMessage = keyMessage('toast.syncing_history');
       showToast = true;
       
       try {
@@ -1126,7 +1175,7 @@
           if (currentProject) void warmupMessageCounts(currentProject);
 
           toastType = 'success';
-          toastMessage = 'Session deleted';
+          toastMessage = keyMessage('toast.session_deleted');
           showToast = true;
           setTimeout(() => {
               showToast = false;
@@ -1134,7 +1183,7 @@
       } catch (e) {
           console.error('Failed to delete session:', e);
           toastType = 'error';
-          toastMessage = 'Delete failed';
+          toastMessage = keyMessage('toast.delete_failed');
           showToast = true;
           setTimeout(() => {
               showToast = false;
@@ -1155,9 +1204,9 @@
     void warmupMessageCounts(name);
   }
 
-  function showFeedback(message: string, type: 'success' | 'error' | 'syncing' = 'success') {
+  function showFeedback(message: string | UiMessage, type: 'success' | 'error' | 'syncing' = 'success') {
       toastType = type;
-      toastMessage = message;
+      toastMessage = typeof message === 'string' ? textMessage(message) : message;
       showToast = true;
       setTimeout(() => {
           showToast = false;
@@ -1168,7 +1217,8 @@
       if (!isWebMode) return false;
 
       const message = error instanceof Error ? error.message : String(error);
-      if (message !== 'Unauthorized' && message !== 'Missing web token. Login required.') {
+      const code = api.getErrorCode(error);
+      if (code !== 'auth.missing_token' && message !== 'Unauthorized' && message !== 'Missing web token. Login required.') {
           return false;
       }
 
@@ -1176,19 +1226,19 @@
       authInitialized = true;
       isAuthenticated = false;
       loginPassword = '';
-      loginError = '登录已失效，请重新登录';
+      loginError = keyMessage('errors.auth.session_expired');
       currentConversation = null;
       currentView = 'list';
       return true;
   }
 
-  async function copyText(text: string, message: string) {
+  async function copyText(text: string, message: UiMessage) {
       try {
           await navigator.clipboard.writeText(text);
           showFeedback(message, 'success');
       } catch (e) {
           console.error('Copy failed:', e);
-          showFeedback('Copy failed', 'error');
+          showFeedback(keyMessage('toast.copy_failed'), 'error');
       }
   }
 
@@ -1199,7 +1249,7 @@
       if (!target?.resumeCommand) return;
 
       if (isWebMode) {
-          await copyText(target.resumeCommand, 'Resume command copied');
+          await copyText(target.resumeCommand, keyMessage('toast.resume_command_copied'));
           return;
       }
 
@@ -1214,13 +1264,13 @@
           await api.launchTerminal(target.resumeCommand, target.projectDir, kind);
           showFeedback(
               kind === 'cmd'
-                  ? 'Opened in CMD'
-                  : 'Opened in PowerShell, command copied',
+                  ? keyMessage('toast.opened_in_cmd')
+                  : keyMessage('toast.opened_in_powershell'),
               'success',
           );
       } catch (e) {
           console.error('Launch terminal failed:', e);
-          showFeedback('Failed to launch terminal', 'error');
+          showFeedback(keyMessage('toast.launch_terminal_failed'), 'error');
       }
   }
 
@@ -1233,13 +1283,13 @@
       event?.stopPropagation();
       if (!selectedSession?.projectDir) return;
       isProjectMenuOpen = false;
-      await copyText(selectedSession.projectDir, 'Project path copied');
+      await copyText(selectedSession.projectDir, keyMessage('toast.project_path_copied'));
   }
 
   async function openProjectInExplorer(event?: MouseEvent) {
       event?.stopPropagation();
       if (isWebMode) {
-          showFeedback('Not supported in web mode', 'error');
+          showFeedback(keyMessage('errors.feature.web_only'), 'error');
           return;
       }
       const target = currentConversation
@@ -1250,10 +1300,10 @@
 
       try {
           await api.openInFileExplorer(target.projectDir);
-          showFeedback('Opened in File Explorer', 'success');
+          showFeedback(keyMessage('toast.opened_in_explorer'), 'success');
       } catch (e) {
           console.error('Open in File Explorer failed:', e);
-          showFeedback('Failed to open File Explorer', 'error');
+          showFeedback(keyMessage('toast.open_explorer_failed'), 'error');
       }
   }
   function mergeMessageContent(current: string, next: string) {
@@ -1374,14 +1424,14 @@
 
   function getMessageBlockLabel(block: MessageBlock): string {
       const role = block.role.toLowerCase();
-      if (isInstructionContextBlock(block)) return 'Startup Instructions';
+      if (isInstructionContextBlock(block)) return t('detail.startup_instructions');
       if (block.kind === 'tool_group') return getToolGroupSummary(block);
       if (block.kind !== 'message') return block.kind;
-      if (role === 'assistant') return 'Assistant';
-      if (role === 'developer') return 'Developer';
-      if (role === 'human' || role === 'user') return 'User';
-      if (role === 'tool') return 'Tool';
-      return role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Message';
+      if (role === 'assistant') return t('detail.assistant');
+      if (role === 'developer') return t('detail.developer');
+      if (role === 'human' || role === 'user') return t('detail.user');
+      if (role === 'tool') return t('detail.tool');
+      return role ? role.charAt(0).toUpperCase() + role.slice(1) : t('detail.message');
   }
 
   function getMessageBlockClass(block: MessageBlock): string {
@@ -1441,12 +1491,12 @@
 
   function getConversationProgressPreview(block: MessageBlock): string {
       const normalized = getConversationProgressText(block.content);
-      if (!normalized) return '(empty)';
+      if (!normalized) return t('detail.empty_progress');
       return Array.from(normalized).slice(0, 15).join('');
   }
 
   function getConversationProgressLabel(block: MessageBlock): string {
-      return getConversationProgressText(block.content) || '(empty)';
+      return getConversationProgressText(block.content) || t('detail.empty_progress');
   }
 
   function isCollapsibleBlock(block: MessageBlock): boolean {
@@ -1467,7 +1517,7 @@
 
   function getToolGroupSummary(block: MessageBlock): string {
       const runCount = block.runCount ?? block.blocks?.length ?? 0;
-      return `Ran ${runCount} ${runCount === 1 ? 'command' : 'commands'}`;
+      return t('detail.command_runs', { count: runCount });
   }
 
   function getToolGroupChildren(block: MessageBlock): MessageBlock[] {
@@ -1570,8 +1620,8 @@
           const top = getConversationAnchorOffset(element);
           return {
               key: element.dataset.progressKey || `anchor-${index}`,
-              label: element.dataset.progressLabel || element.dataset.progressPreview || 'User message',
-              preview: element.dataset.progressPreview || 'User message',
+              label: element.dataset.progressLabel || element.dataset.progressPreview || t('detail.user_message'),
+              preview: element.dataset.progressPreview || t('detail.user_message'),
               top,
           };
       });
@@ -1727,7 +1777,7 @@
 
       isConversationRefreshing = true;
       toastType = 'syncing';
-      toastMessage = 'Refreshing conversation...';
+      toastMessage = keyMessage('toast.conversation_refreshing');
       showToast = true;
       let abortedForUnauthorized = false;
 
@@ -1799,7 +1849,7 @@
           });
 
           toastType = 'success';
-          toastMessage = 'Conversation refreshed';
+          toastMessage = keyMessage('toast.conversation_refreshed');
       } catch (e) {
           if (handleWebUnauthorized(e)) {
               abortedForUnauthorized = true;
@@ -1808,7 +1858,7 @@
           }
           console.error('Failed to refresh conversation:', e);
           toastType = 'error';
-          toastMessage = 'Conversation refresh failed';
+          toastMessage = keyMessage('toast.conversation_refresh_failed');
       } finally {
           if (!abortedForUnauthorized) {
               showToast = true;
@@ -2114,26 +2164,27 @@
   }
 
   function formatRelativeTime(iso?: string): string {
-      if (!iso) return 'never';
+      if (!iso) return t('common.never');
 
       const date = parseIndexDate(iso);
       if (!date) return iso;
       const diff = Date.now() - date.getTime();
       if (Number.isNaN(diff)) return iso;
-      if (diff < 0) return 'just now';
+      if (diff < 0) return t('common.just_now');
 
       const minutes = Math.floor(diff / 60000);
-      if (minutes < 1) return 'just now';
-      if (minutes < 60) return `${minutes}m ago`;
+      if (minutes < 1) return t('common.just_now');
+      const formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+      if (minutes < 60) return formatter.format(-minutes, 'minute');
       const hours = Math.floor(minutes / 60);
-      if (hours < 24) return `${hours}h ago`;
-      return `${Math.floor(hours / 24)}d ago`;
+      if (hours < 24) return formatter.format(-hours, 'hour');
+      return formatter.format(-Math.floor(hours / 24), 'day');
   }
 
   function formatIndexDateTime(iso?: string): string {
       const date = parseIndexDate(iso);
-      if (!date) return iso ?? 'N/A';
-      return new Intl.DateTimeFormat(undefined, {
+      if (!date) return iso ?? t('common.na');
+      return new Intl.DateTimeFormat(locale, {
           year: 'numeric',
           month: 'numeric',
           day: 'numeric',
@@ -2175,11 +2226,18 @@
   }
 
   function syncPhaseLabel(phase?: string): string {
-      if (phase === 'refreshing') return 'Waiting for stable write';
-      if (phase === 'scanning') return 'Scanning';
-      if (phase === 'syncing') return 'Syncing';
-      if (phase === 'done') return 'Up to date';
-      return 'Idle';
+      if (phase === 'refreshing') return t('index.sync_phase.refreshing');
+      if (phase === 'scanning') return t('index.sync_phase.scanning');
+      if (phase === 'syncing') return t('index.sync_phase.syncing');
+      if (phase === 'done') return t('index.sync_phase.done');
+      return t('index.sync_phase.idle');
+  }
+
+  function syncPhaseMessage(phase?: string): UiMessage | null {
+      if (phase === 'refreshing') return keyMessage('index.sync_message.refreshing');
+      if (phase === 'scanning') return keyMessage('index.sync_message.scanning');
+      if (phase === 'syncing') return keyMessage('index.sync_message.syncing');
+      return null;
   }
 
   const sourceLabel = $derived(({
@@ -2188,7 +2246,7 @@
       'gemini': 'Gemini CLI',
       'openclaw': 'OpenClaw',
       'opencode': 'OpenCode'
-  } as Record<string, string>)[currentSource] || 'History');
+  } as Record<string, string>)[currentSource] || t('common.history'));
   const selectedSession = $derived(
       currentConversation
           ? getSessionById(currentConversation.session_id, currentConversation.source_type)
@@ -2196,8 +2254,8 @@
   );
   const indexStatusText = $derived(
       searchIndexStatus?.ready
-          ? `Indexed ${formatRelativeTime(searchIndexStatus.lastIndexedAt)}`
-          : 'Index unavailable',
+          ? t('index.status.indexed', { relative: formatRelativeTime(searchIndexStatus.lastIndexedAt) })
+          : t('index.status.unavailable'),
   );
   const indexSessionPreviewCount = $derived(indexLibraryItems.length);
   const indexLibraryPageCount = $derived(
@@ -2205,15 +2263,26 @@
   );
   const indexLibraryRangeText = $derived(
       indexLibraryTotalCount === 0
-          ? '0 shown'
-          : `${(indexLibraryPage - 1) * INDEX_LIBRARY_PAGE_SIZE + 1}-${Math.min(indexLibraryPage * INDEX_LIBRARY_PAGE_SIZE, indexLibraryTotalCount)} of ${indexLibraryTotalCount}`,
+          ? t('index.range_empty')
+          : t('index.range_value', {
+              start: (indexLibraryPage - 1) * INDEX_LIBRARY_PAGE_SIZE + 1,
+              end: Math.min(indexLibraryPage * INDEX_LIBRARY_PAGE_SIZE, indexLibraryTotalCount),
+              total: indexLibraryTotalCount,
+            }),
+  );
+  const indexPaginationText = $derived(
+      t('index.page_info', {
+          page: indexLibraryPage,
+          pages: indexLibraryPageCount,
+          loaded: indexSessionPreviewCount,
+      }),
   );
   const indexSyncText = $derived(
       searchIndexSyncInfo
           ? `${syncPhaseLabel(searchIndexSyncInfo.phase)}${
               searchIndexSyncInfo.total > 0 ? ` ${searchIndexSyncInfo.count}/${searchIndexSyncInfo.total}` : ''
             }`
-          : 'Idle',
+          : t('index.sync_phase.idle'),
   );
 
 </script>
@@ -2222,13 +2291,13 @@
 <div class="auth-shell">
   <div class="auth-card auth-card-loading">
     <div class="auth-badge">ACLIV Web</div>
-    <h1>验证登录状态</h1>
-    <p>正在检查当前登录状态...</p>
+    <h1>{t('auth.checking_status_title')}</h1>
+    <p>{t('auth.checking_status_body')}</p>
   </div>
 </div>
 {:else if isWebMode && !isAuthenticated}
 <div class="auth-shell">
-  <button class="action-btn auth-theme-toggle" onclick={toggleTheme} type="button" title="Toggle theme">
+  <button class="action-btn auth-theme-toggle" onclick={toggleTheme} type="button" title={t('common.theme.toggle')}>
       {#if theme === 'light'}
         <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z"></path></svg>
       {:else}
@@ -2237,21 +2306,21 @@
   </button>
   <div class="auth-card">
     <div class="auth-badge">ACLIV Web</div>
-    <h1>登录</h1>
+    <h1>{t('auth.login_title')}</h1>
     <form class="auth-form" onsubmit={(event) => { event.preventDefault(); void handleLoginSubmit(); }}>
       <label class="auth-field">
-        <span>用户名</span>
+        <span>{t('auth.username')}</span>
         <input bind:value={loginUsername} type="text" autocomplete="username" placeholder="admin" />
       </label>
       <label class="auth-field">
-        <span>密码</span>
-        <input bind:value={loginPassword} type="password" autocomplete="current-password" placeholder="请输入密码" />
+        <span>{t('auth.password')}</span>
+        <input bind:value={loginPassword} type="password" autocomplete="current-password" placeholder={t('auth.password_placeholder')} />
       </label>
       {#if loginError}
-        <div class="auth-error">{loginError}</div>
+        <div class="auth-error">{resolveMessage(loginError)}</div>
       {/if}
       <button class="auth-submit" type="submit" disabled={isLoggingIn}>
-        {isLoggingIn ? '登录中...' : '登录'}
+        {isLoggingIn ? t('auth.submitting') : t('auth.submit')}
       </button>
     </form>
   </div>
@@ -2306,19 +2375,19 @@
 
   <main class="main-content">
      <div class="view" class:active={currentView === 'list'} id="listView">
-         <div class="view-header">
-             <h2>{currentProject || 'Select a Project'}</h2>
+     <div class="view-header">
+             <h2>{currentProject || t('detail.select_project')}</h2>
              {#if projects.length > 0 && currentProject}
-                <span class="view-info">{conversations.length} conversations</span>
+                <span class="view-info">{t('common.count.conversations', { count: conversations.length })}</span>
              {/if}
              <div class="view-header-actions">
                  <button class="action-btn" id="openSearchBtn" onclick={openSearch} type="button">
                     {@html getIcon('search', 16)}
                  </button>
-                 <button class="action-btn index-toggle-btn" class:index-ready={searchIndexStatus?.ready} onclick={() => void openIndexModal()} type="button" title="Search Index">
+                 <button class="action-btn index-toggle-btn" class:index-ready={searchIndexStatus?.ready} onclick={() => void openIndexModal()} type="button" title={t('index.title')}>
                     {@html getIcon('database', 16)}
                  </button>
-                 <button class="action-btn theme-toggle" id="themeToggle" onclick={toggleTheme} type="button">
+                 <button class="action-btn theme-toggle" id="themeToggle" onclick={toggleTheme} type="button" title={t('common.theme.toggle')}>
                      {#if theme === 'light'}
                        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z"></path></svg>
                      {:else}
@@ -2331,7 +2400,7 @@
             {#if conversations.length === 0}
                <div class="empty-state">
                    {@html ICONS.empty_box}
-                   <h3>No conversations</h3>
+                   <h3>{t('detail.no_conversations')}</h3>
                </div>
             {:else}
                 {#each conversations as conv}
@@ -2343,7 +2412,7 @@
                             {/if}
                         </div>
                         <div class="conversation-meta">
-                            <span class="meta-item">{@html getIcon('conversation', 12)} {conv.message_count} messages</span>
+                            <span class="meta-item">{@html getIcon('conversation', 12)} {t('common.count.messages', { count: conv.message_count })}</span>
                             <span class="meta-item">{@html getIcon('clock', 12)} {conv.date}</span>
                         </div>
                     </button>
@@ -2353,20 +2422,20 @@
      </div>
 
      <div class="view" class:active={currentView === 'detail'} id="detailView">
-        <div class="view-header">
+     <div class="view-header">
              <button class="btn-secondary" id="backBtn" onclick={() => goToConversationList()} type="button">
-                 {@html ICONS.back} Back
+                 {@html ICONS.back} {t('actions.back')}
              </button>
-              <h2>{selectedSession ? sessionTitle(selectedSession) : currentConversation?.title || 'Conversation'}</h2>
+              <h2>{selectedSession ? sessionTitle(selectedSession) : currentConversation?.title || t('common.conversation')}</h2>
              {#if currentConversation}
                  <div class="view-header-actions">
                      <button class="action-btn" onclick={openSearch} type="button">
                         {@html getIcon('search', 16)}
                      </button>
-                     <button class="action-btn index-toggle-btn" class:index-ready={searchIndexStatus?.ready} onclick={() => void openIndexModal()} type="button" title="Search Index">
+                     <button class="action-btn index-toggle-btn" class:index-ready={searchIndexStatus?.ready} onclick={() => void openIndexModal()} type="button" title={t('index.title')}>
                         {@html getIcon('database', 16)}
                      </button>
-                     <button class="action-btn theme-toggle" onclick={toggleTheme} type="button">
+                     <button class="action-btn theme-toggle" onclick={toggleTheme} type="button" title={t('common.theme.toggle')}>
                          {#if theme === 'light'}
                            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z"></path></svg>
                          {:else}
@@ -2377,7 +2446,7 @@
                         <span class="icon-inline" aria-hidden="true">
                             {@html getIcon('trash', 15)}
                         </span>
-                        <span>{isDeleting ? 'Deleting...' : 'Delete'}</span>
+                        <span>{isDeleting ? t('actions.deleting') : t('actions.delete')}</span>
                     </button>
                 </div>
             {/if}
@@ -2393,9 +2462,9 @@
                     <h3>{selectedSession ? sessionTitle(selectedSession) : currentConversation.title}</h3>
                     <div class="conversation-info">
                         {#if showSessionIds}
-                            <span>{@html getIcon('message', 12)} ID: {currentConversation.session_id}</span>
+                            <span>{@html getIcon('message', 12)} {t('common.id')}: {currentConversation.session_id}</span>
                         {/if}
-                        <span>{@html getIcon('clock', 12)} {currentConversation.timestamp || 'N/A'}</span>
+                        <span>{@html getIcon('clock', 12)} {currentConversation.timestamp || t('common.na')}</span>
                         {#if selectedSession?.projectDir}
                             <div class="menu-anchor project-menu-anchor">
                                 <button
@@ -2411,11 +2480,11 @@
                                 </button>
                                 <div class="hover-menu" class:show-menu={isProjectMenuOpen}>
                                     <button type="button" onclick={handleProjectPathCopy}>
-                                        复制路径
+                                        {t('actions.copy_path')}
                                     </button>
                                     {#if !isWebMode}
                                         <button type="button" onclick={openProjectInExplorer}>
-                                            在文件管理器打开
+                                            {t('actions.open_in_explorer')}
                                         </button>
                                     {/if}
                                 </div>
@@ -2425,13 +2494,13 @@
                     {#if selectedSession?.resumeCommand}
                         <div class="detail-card">
                             <div class="detail-card-header">
-                                <span class="detail-card-label">Resume Command</span>
+                                <span class="detail-card-label">{t('detail.resume_command')}</span>
                                 <div class="detail-card-actions">
                                     <button
                                         class="inline-icon-btn"
-                                        onclick={() => copyText(selectedSession.resumeCommand!, 'Resume command copied')}
+                                        onclick={() => copyText(selectedSession.resumeCommand!, keyMessage('toast.resume_command_copied'))}
                                         type="button"
-                                        title="Copy resume command"
+                                        title={t('detail.copy_resume_command')}
                                     >
                                         {@html getIcon('copy', 14)}
                                     </button>
@@ -2440,16 +2509,16 @@
                                             <button
                                                 class="inline-icon-btn"
                                                 type="button"
-                                                title="Open in terminal"
+                                                title={t('detail.open_terminal')}
                                             >
                                                 {@html getIcon('terminal', 14)}
                                             </button>
                                             <div class="hover-menu">
                                                 <button type="button" onclick={() => openResumeTerminal('cmd')}>
-                                                    CMD 打开
+                                                    {t('detail.open_in_cmd')}
                                                 </button>
                                                 <button type="button" onclick={() => openResumeTerminal('powershell')}>
-                                                    PowerShell 打开
+                                                    {t('detail.open_in_powershell')}
                                                 </button>
                                             </div>
                                         </div>
@@ -2494,13 +2563,13 @@
                                             <div class="message-collapsible-body">
                                                 <div class="message-collapsible-meta-row">
                                                     {#if toolBlock.callId}
-                                                        <div class="tool-call-meta">Call ID: {toolBlock.callId}</div>
+                                                        <div class="tool-call-meta">{t('detail.call_id')}: {toolBlock.callId}</div>
                                                     {/if}
                                                     <button
                                                         class="inline-icon-btn"
-                                                        onclick={() => copyText(toolBlock.content, 'Message copied')}
+                                                        onclick={() => copyText(toolBlock.content, keyMessage('toast.message_copied'))}
                                                         type="button"
-                                                        title="Copy message"
+                                                        title={t('detail.copy_message')}
                                                     >
                                                         {@html getIcon('copy', 14)}
                                                     </button>
@@ -2536,13 +2605,13 @@
                                 <div class="message-collapsible-body">
                                     <div class="message-collapsible-meta-row">
                                         {#if block.callId}
-                                            <div class="tool-call-meta">Call ID: {block.callId}</div>
+                                            <div class="tool-call-meta">{t('detail.call_id')}: {block.callId}</div>
                                         {/if}
                                         <button
                                             class="inline-icon-btn"
-                                            onclick={() => copyText(block.content, 'Message copied')}
+                                            onclick={() => copyText(block.content, keyMessage('toast.message_copied'))}
                                             type="button"
-                                            title="Copy message"
+                                            title={t('detail.copy_message')}
                                         >
                                             {@html getIcon('copy', 14)}
                                         </button>
@@ -2579,9 +2648,9 @@
                                         {/if}
                                         <button
                                             class="inline-icon-btn message-copy-btn"
-                                            onclick={() => copyText(block.content, 'Message copied')}
+                                            onclick={() => copyText(block.content, keyMessage('toast.message_copied'))}
                                             type="button"
-                                            title="Copy message"
+                                            title={t('detail.copy_message')}
                                         >
                                             {@html getIcon('copy', 14)}
                                         </button>
@@ -2607,7 +2676,7 @@
                 class:expanded={isConversationProgressExpanded}
                 style={`height: ${getConversationProgressNavHeight(conversationProgressAnchors.length)}`}
                 role="group"
-                aria-label="Conversation progress"
+                aria-label={t('detail.conversation_progress')}
                 onmouseenter={openConversationProgressDirectory}
                 onmouseleave={closeConversationProgressDirectory}
             >
@@ -2622,7 +2691,7 @@
                     ></button>
                 {/each}
                 <div class="detail-progress-directory">
-                    <div class="detail-progress-directory-title">用户目录</div>
+                    <div class="detail-progress-directory-title">{t('detail.user_directory')}</div>
                     <div class="detail-progress-directory-list">
                         {#each conversationProgressAnchors as anchor}
                             <button
@@ -2645,7 +2714,7 @@
             type="button"
             onclick={() => void refreshCurrentConversation()}
             disabled={isConversationRefreshing}
-            title="刷新当前会话"
+            title={t('detail.refresh_current')}
         >
             <span class="icon-inline" class:fab-icon-spinning={isConversationRefreshing} aria-hidden="true">
                 {@html getIcon('refresh', 16)}
@@ -2659,12 +2728,12 @@
               <svg class="spinner-small" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
               </svg>
-              <span>{toastMessage}</span>
+              <span>{resolveMessage(toastMessage)}</span>
           {:else}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M20 6 9 17 4 12"></path>
               </svg>
-              <span>{toastMessage}</span>
+              <span>{resolveMessage(toastMessage)}</span>
           {/if}
       </div>
   </div>
@@ -2680,14 +2749,14 @@
            <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_static_element_interactions -->
           <div class="search-input-wrapper" role="button" tabindex="0" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
               {@html getIcon('search', 16)}
-              <input type="text" id="searchInput" placeholder="Search conversations..." 
+              <input type="text" id="searchInput" placeholder={t('search.placeholder')}
                      bind:value={searchQuery} 
                      oninput={handleSearchInput} />
               <button class="btn-close-search" onclick={closeSearch} type="button">ESC</button>
           </div>
           <div class="search-filter-bar">
               <div class="search-filter-group">
-                  <button class:active={searchTimeRange === 'all'} class="filter-chip" type="button" onclick={() => setSearchTimeRange('all')}>All</button>
+                  <button class:active={searchTimeRange === 'all'} class="filter-chip" type="button" onclick={() => setSearchTimeRange('all')}>{t('search.all')}</button>
                   <button class:active={searchTimeRange === '7d'} class="filter-chip" type="button" onclick={() => setSearchTimeRange('7d')}>7d</button>
                   <button class:active={searchTimeRange === '30d'} class="filter-chip" type="button" onclick={() => setSearchTimeRange('30d')}>30d</button>
                   <button class:active={searchTimeRange === '90d'} class="filter-chip" type="button" onclick={() => setSearchTimeRange('90d')}>90d</button>
@@ -2695,42 +2764,46 @@
               <div class="search-filter-group search-filter-group-right">
                   <span class="search-results-count">
                       {#if searchQuery.trim()}
-                          {searchTotalCount} results
+                          {t('common.count.results', { count: searchTotalCount })}
                       {:else}
-                          Type to search
+                          {t('search.type_to_search')}
                       {/if}
                   </span>
                   <button class:active={searchSort === 'relevance'} class="filter-chip" type="button" onclick={() => setSearchSort('relevance')}>
-                      Relevance
+                      {t('search.relevance')}
                   </button>
                   <button class:active={searchSort === 'recent'} class="filter-chip" type="button" onclick={() => setSearchSort('recent')}>
-                      Recent
+                      {t('search.recent')}
                   </button>
                   {#if currentProject}
                       <button class:active={searchProjectOnly} class="filter-chip" type="button" onclick={toggleSearchProjectOnly}>
-                          {searchProjectOnly ? 'Current project' : 'All projects'}
+                          {searchProjectOnly ? t('search.current_project') : t('search.all_projects')}
                       </button>
                   {/if}
               </div>
           </div>
           <div class="search-modal-results" id="searchModalResults">
-              {#each searchResults as result}
-                  <button class="conversation-item" onclick={() => handleSearchResultClick(result)} type="button">
-                      <div class="conversation-title">
-                          <span>{result.title}</span>
-                          {#if showSessionIds}
-                              <span class="conversation-session-id">{formatConversationSessionId(result.session_id)}</span>
+              {#if searchQuery.trim() && searchResults.length === 0}
+                  <div class="index-library-empty search-empty-state">{t('search.no_results')}</div>
+              {:else}
+                  {#each searchResults as result}
+                      <button class="conversation-item" onclick={() => handleSearchResultClick(result)} type="button">
+                          <div class="conversation-title">
+                              <span>{result.title}</span>
+                              {#if showSessionIds}
+                                  <span class="conversation-session-id">{formatConversationSessionId(result.session_id)}</span>
+                              {/if}
+                          </div>
+                          {#if result.snippet}
+                              <div class="conversation-snippet search-snippet">{@html result.snippet}</div>
                           {/if}
-                      </div>
-                      {#if result.snippet}
-                          <div class="conversation-snippet search-snippet">{@html result.snippet}</div>
-                      {/if}
-                       <div class="conversation-meta">
-                            <span class="meta-item">{@html getIcon('project', 12)} {result.project}</span>
-                            <span class="meta-item">{@html getIcon('clock', 12)} {result.date}</span>
-                       </div>
-                  </button>
-              {/each}
+                           <div class="conversation-meta">
+                                <span class="meta-item">{@html getIcon('project', 12)} {result.project}</span>
+                                <span class="meta-item">{@html getIcon('clock', 12)} {result.date}</span>
+                           </div>
+                      </button>
+                  {/each}
+              {/if}
           </div>
       </div>
   </div>
@@ -2748,7 +2821,7 @@
               <div class="index-modal-title">
                   <div class="index-modal-title-row">
                       <span class:status-ok={searchIndexStatus?.ready} class="index-status-dot"></span>
-                      <h3>Search Index</h3>
+                      <h3>{t('index.title')}</h3>
                   </div>
                   <p>{indexStatusText}</p>
               </div>
@@ -2762,7 +2835,7 @@
                   type="button"
                   onclick={() => void setIndexModalTab('overview')}
               >
-                  Overview
+                  {t('index.overview')}
               </button>
               <button
                   class="index-tab-btn"
@@ -2770,51 +2843,51 @@
                   type="button"
                   onclick={() => void setIndexModalTab('sessions')}
               >
-                  Indexed Sessions
+                  {t('index.indexed_sessions')}
               </button>
           </div>
 
           {#if indexModalTab === 'overview'}
               <div class="index-modal-summary">
                   <div class="index-summary-card">
-                      <span class="index-summary-label">Database</span>
-                      <span class="index-summary-value">{searchIndexStatus?.dbPath || 'Unavailable'}</span>
+                      <span class="index-summary-label">{t('index.database')}</span>
+                      <span class="index-summary-value">{searchIndexStatus?.dbPath || t('common.unavailable')}</span>
                   </div>
                   <div class="index-summary-grid">
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Sync Status</span>
+                          <span class="index-summary-label">{t('index.sync_status')}</span>
                           <strong>{indexSyncText}</strong>
                           {#if searchIndexSyncInfo?.message}
-                              <span class="index-summary-subtle">{searchIndexSyncInfo.message}</span>
+                              <span class="index-summary-subtle">{resolveMessage(searchIndexSyncInfo.message)}</span>
                           {/if}
                       </div>
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Projects</span>
+                          <span class="index-summary-label">{t('index.projects')}</span>
                           <strong>{searchIndexStatus?.projectsCount ?? 0}</strong>
                       </div>
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Sessions</span>
+                          <span class="index-summary-label">{t('index.sessions')}</span>
                           <strong>{searchIndexStatus?.sessionsCount ?? 0}</strong>
                       </div>
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Messages</span>
+                          <span class="index-summary-label">{t('index.messages')}</span>
                           <strong>{searchIndexStatus?.messagesCount ?? 0}</strong>
                       </div>
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Database Size</span>
+                          <span class="index-summary-label">{t('index.database_size')}</span>
                           <strong>{formatBytes(searchIndexStatus?.dbSizeBytes)}</strong>
                       </div>
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Last Indexed</span>
+                          <span class="index-summary-label">{t('index.last_indexed')}</span>
                           <div class="index-summary-hover">
-                              <span class="index-summary-hover-chip">Status</span>
+                              <span class="index-summary-hover-chip">{t('index.status')}</span>
                               <div class="index-summary-tooltip">
                                   <div class="index-summary-tooltip-row">
-                                      <span>Last Success</span>
+                                      <span>{t('index.last_success')}</span>
                                       <strong>{formatIndexDateTime(searchIndexStatus?.lastSuccessfulSyncAt)}</strong>
                                   </div>
                                   <div class="index-summary-tooltip-row">
-                                      <span>Last Error</span>
+                                      <span>{t('index.last_error')}</span>
                                       <strong>{formatIndexDateTime(searchIndexStatus?.lastErrorAt)}</strong>
                                   </div>
                               </div>
@@ -2822,7 +2895,7 @@
                           <strong>{formatIndexDateTime(searchIndexStatus?.lastIndexedAt)}</strong>
                       </div>
                       <div class="index-summary-card">
-                          <span class="index-summary-label">Errors</span>
+                          <span class="index-summary-label">{t('index.errors')}</span>
                           <strong>{searchIndexStatus?.errorCount ?? 0}</strong>
                       </div>
                   </div>
@@ -2832,11 +2905,11 @@
                               <div class="index-source-card">
                                   <div class="index-source-head">
                                       <strong>{providerDisplayName(source.providerId)}</strong>
-                                      <span>{source.sessionsCount} sessions</span>
+                                      <span>{t('common.count.sessions', { count: source.sessionsCount })}</span>
                                   </div>
                                   <div class="index-source-metrics">
-                                      <span>{source.projectsCount} projects</span>
-                                      <span>{source.messagesCount} messages</span>
+                                      <span>{t('common.count.projects', { count: source.projectsCount })}</span>
+                                      <span>{t('common.count.messages', { count: source.messagesCount })}</span>
                                   </div>
                               </div>
                           {/each}
@@ -2844,11 +2917,32 @@
                   {/if}
                   <div class="index-status-actions">
                       <button class="index-action-btn" type="button" onclick={() => runSearchIndexAction('refresh')} disabled={isIndexActionRunning}>
-                          Sync
+                          {t('actions.sync')}
                       </button>
                       <button class="index-action-btn" type="button" onclick={() => runSearchIndexAction('rebuild')} disabled={isIndexActionRunning}>
-                          Rebuild
+                          {t('actions.rebuild')}
                       </button>
+                      <div class="index-locale-switch" role="group" aria-label={t('index.language')}>
+                          <span class="index-locale-label">{t('index.language')}</span>
+                          <div class="index-locale-segments">
+                              <button
+                                  class="index-locale-btn"
+                                  class:active={locale === 'zh'}
+                                  type="button"
+                                  onclick={() => updateLocale('zh')}
+                              >
+                                  {t('index.locale.zh')}
+                              </button>
+                              <button
+                                  class="index-locale-btn"
+                                  class:active={locale === 'en'}
+                                  type="button"
+                                  onclick={() => updateLocale('en')}
+                              >
+                                  {t('index.locale.en')}
+                              </button>
+                          </div>
+                      </div>
                       <button
                           class="index-switch-btn"
                           class:active={compactProjectPaths}
@@ -2857,7 +2951,7 @@
                           aria-checked={compactProjectPaths}
                           onclick={toggleCompactProjectPaths}
                       >
-                          <span class="index-switch-label">仅末级目录</span>
+                          <span class="index-switch-label">{t('index.compact_paths')}</span>
                           <span class="index-switch-track" aria-hidden="true">
                               <span class="index-switch-thumb"></span>
                           </span>
@@ -2870,7 +2964,7 @@
                           aria-checked={hideFunctionCalls}
                           onclick={toggleHideFunctionCalls}
                       >
-                          <span class="index-switch-label">隐藏工具调用</span>
+                          <span class="index-switch-label">{t('index.hide_tool_calls')}</span>
                           <span class="index-switch-track" aria-hidden="true">
                               <span class="index-switch-thumb"></span>
                           </span>
@@ -2883,7 +2977,7 @@
                           aria-checked={showSessionIds}
                           onclick={toggleShowSessionIds}
                       >
-                          <span class="index-switch-label">会话 ID</span>
+                          <span class="index-switch-label">{t('index.show_session_ids')}</span>
                           <span class="index-switch-track" aria-hidden="true">
                               <span class="index-switch-thumb"></span>
                           </span>
@@ -2894,34 +2988,34 @@
               <div class="index-library-section">
                   <div class="index-library-header">
                       <div>
-                          <h4>Indexed Sessions</h4>
-                          <p>Click a session to open it directly from the local index.</p>
+                          <h4>{t('index.indexed_sessions')}</h4>
+                          <p>{t('index.open_hint')}</p>
                       </div>
                       <span class="view-info">{indexLibraryRangeText}</span>
                   </div>
 
                   <div class="index-library-filters">
                       <label class="index-filter-field">
-                          <span>Provider</span>
+                          <span>{t('common.provider')}</span>
                           <select
                               class="index-filter-select"
                               value={indexLibraryProviderFilter}
                               onchange={(event) => void setIndexLibraryProviderFilter((event.currentTarget as HTMLSelectElement).value)}
                           >
-                              <option value="all">All providers</option>
+                              <option value="all">{t('index.all_providers')}</option>
                               {#each sources as source}
                                   <option value={source}>{providerDisplayName(source)}</option>
                               {/each}
                           </select>
                       </label>
                       <label class="index-filter-field">
-                          <span>Project</span>
+                          <span>{t('common.project')}</span>
                           <select
                               class="index-filter-select"
                               value={indexLibraryProjectFilter}
                               onchange={(event) => void setIndexLibraryProjectFilter((event.currentTarget as HTMLSelectElement).value)}
                           >
-                              <option value="all">All projects</option>
+                              <option value="all">{t('index.all_projects')}</option>
                               {#each indexProjectOptions as project}
                                   <option value={project.project}>
                                       {project.projectName || baseName(project.project) || project.project} ({project.sessionsCount})
@@ -2933,9 +3027,9 @@
 
                   <div class="index-library-list">
                       {#if isIndexLibraryLoading}
-                          <div class="index-library-empty">Loading indexed sessions...</div>
+                          <div class="index-library-empty">{t('index.loading_sessions')}</div>
                       {:else if indexLibraryItems.length === 0}
-                          <div class="index-library-empty">No indexed sessions available.</div>
+                          <div class="index-library-empty">{t('index.no_sessions')}</div>
                       {:else}
                           {#each indexLibraryItems as item}
                               <button class="index-library-item" type="button" onclick={() => handleIndexSessionClick(item)}>
@@ -2945,16 +3039,16 @@
                                   </div>
                                   <div class="index-library-meta">
                                       <span class="meta-item">{@html getIcon('project', 12)} {item.projectName || baseName(item.project) || item.project}</span>
-                                      <span class="meta-item">{@html getIcon('message', 12)} {item.messageCount} messages</span>
+                                      <span class="meta-item">{@html getIcon('message', 12)} {t('common.count.messages', { count: item.messageCount })}</span>
                                       <span class="meta-item">{@html getIcon('clock', 12)} {formatTimestamp(item.lastActiveAt ?? item.createdAt)}</span>
                                   </div>
                                   {#if item.model || item.cwd}
                                       <div class="index-library-extra">
                                           {#if item.model}
-                                              <span>Model: {item.model}</span>
+                                              <span>{t('common.model')}: {item.model}</span>
                                           {/if}
                                           {#if item.cwd}
-                                              <span>CWD: {item.cwd}</span>
+                                              <span>{t('common.cwd')}: {item.cwd}</span>
                                           {/if}
                                       </div>
                                   {/if}
@@ -2964,9 +3058,7 @@
                   </div>
 
                   <div class="index-library-pagination">
-                      <span class="index-pagination-info">
-                          Page {indexLibraryPage} / {indexLibraryPageCount} · {indexSessionPreviewCount} loaded
-                      </span>
+                      <span class="index-pagination-info">{indexPaginationText}</span>
                       <div class="index-pagination-actions">
                           <button
                               class="index-page-btn"
@@ -2974,7 +3066,7 @@
                               onclick={() => void changeIndexLibraryPage(indexLibraryPage - 1)}
                               disabled={isIndexLibraryLoading || indexLibraryPage <= 1}
                           >
-                              Previous
+                              {t('actions.previous')}
                           </button>
                           <button
                               class="index-page-btn"
@@ -2982,7 +3074,7 @@
                               onclick={() => void changeIndexLibraryPage(indexLibraryPage + 1)}
                               disabled={isIndexLibraryLoading || indexLibraryPage >= indexLibraryPageCount}
                           >
-                              Next
+                              {t('actions.next')}
                           </button>
                       </div>
                   </div>
@@ -3001,26 +3093,26 @@
   >
       <div class="confirm-card">
           <div class="confirm-badge">{@html getIcon('trash', 16)}</div>
-          <h3>Delete session?</h3>
+          <h3>{t('detail.delete_confirm_title')}</h3>
           <p>
               {#if deleteTarget}
-                  This will permanently remove <strong>{sessionTitle(deleteTarget)}</strong> and its provider-side session files.
+                  {t('detail.delete_confirm_body', { title: sessionTitle(deleteTarget) })}
               {/if}
           </p>
           {#if deleteTarget}
               <div class="confirm-meta">
                   {#if showSessionIds}
-                      <span>ID: {deleteTarget.sessionId}</span>
+                      <span>{t('common.id')}: {deleteTarget.sessionId}</span>
                   {/if}
-                  <span>Provider: {deleteTarget.providerId}</span>
+                  <span>{t('common.provider')}: {deleteTarget.providerId}</span>
               </div>
           {/if}
           <div class="confirm-actions">
               <button class="btn-secondary" onclick={closeDeleteDialog} type="button" disabled={isDeleting}>
-                  Cancel
+                  {t('actions.cancel')}
               </button>
               <button class="btn-danger" onclick={confirmDeleteSession} type="button" disabled={isDeleting}>
-                  {@html getIcon('trash', 14)} {isDeleting ? 'Deleting...' : 'Delete Session'}
+                  {@html getIcon('trash', 14)} {isDeleting ? t('actions.deleting') : t('actions.delete_session')}
               </button>
           </div>
       </div>

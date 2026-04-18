@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getLocale, translate, type TranslationKey } from './i18n';
 
 export const WEB_TOKEN_STORAGE_KEY = 'acliv_token';
 
@@ -155,7 +156,24 @@ interface ApiResponse<T> {
     ok: boolean;
     data: T;
     error?: string;
+    code?: string;
 }
+
+type ApiClientError = Error & {
+    code?: string;
+};
+
+const ERROR_KEY_BY_CODE: Record<string, TranslationKey> = {
+    'auth.invalid_credentials': 'errors.auth.invalid_credentials',
+    'auth.missing_credentials': 'errors.auth.missing_credentials',
+    'auth.missing_token': 'errors.auth.missing_token',
+    'auth.session_expired': 'errors.auth.session_expired',
+    'request.bad_request': 'errors.request.bad_request',
+    'request.path_outside_provider_root': 'errors.request.path_outside_provider_root',
+    'request.internal_error': 'errors.request.internal_error',
+    'feature.web_only': 'errors.feature.web_only',
+    'feature.desktop_only': 'errors.feature.desktop_only',
+};
 
 interface BackendAdapter {
     listSessions: () => Promise<SessionMeta[]>;
@@ -213,6 +231,40 @@ function getWebToken(): string {
     return localStorage.getItem(WEB_TOKEN_STORAGE_KEY)?.trim() ?? '';
 }
 
+function createApiClientError(message: string, code?: string): ApiClientError {
+    const error = new Error(message) as ApiClientError;
+    if (code) {
+        error.code = code;
+    }
+    return error;
+}
+
+function localizeKnownError(code?: string, fallback?: string): string {
+    const key = code ? ERROR_KEY_BY_CODE[code] : undefined;
+    if (key) {
+        return translate(getLocale(), key);
+    }
+    return fallback?.trim() || translate(getLocale(), 'errors.request.internal_error');
+}
+
+function throwLocalizedError(code?: string, fallback?: string): never {
+    throw createApiClientError(localizeKnownError(code, fallback), code);
+}
+
+export function getErrorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== 'object') {
+        return undefined;
+    }
+
+    const candidate = (error as { code?: unknown }).code;
+    return typeof candidate === 'string' ? candidate : undefined;
+}
+
+export function getErrorTranslationKey(error: unknown): TranslationKey | undefined {
+    const code = getErrorCode(error);
+    return code ? ERROR_KEY_BY_CODE[code] : undefined;
+}
+
 export function setWebToken(token: string) {
     if (typeof window === 'undefined') return;
     localStorage.setItem(WEB_TOKEN_STORAGE_KEY, token.trim());
@@ -226,7 +278,7 @@ export function clearWebToken() {
 function assertWebToken(): string {
     const token = getWebToken();
     if (!token) {
-        throw new Error('Missing web token. Login required.');
+        throwLocalizedError('auth.missing_token', 'Missing web token. Login required.');
     }
     return token;
 }
@@ -240,8 +292,7 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
     }
 
     if (!response.ok || !payload?.ok) {
-        const errorMessage = payload?.error ?? `Request failed: ${response.status}`;
-        throw new Error(errorMessage);
+        throwLocalizedError(payload?.code, payload?.error ?? `Request failed: ${response.status}`);
     }
 
     return payload.data;
@@ -283,7 +334,7 @@ async function fetchApi<T>(path: string, init: RequestInit): Promise<T> {
 
 export async function loginWeb(username: string, password: string): Promise<WebLoginResult> {
     if (!isWebMode()) {
-        throw new Error('Not supported outside web mode');
+        throwLocalizedError('feature.desktop_only', 'Not supported outside web mode');
     }
 
     return fetchPublicApi('/api/auth/login', {
@@ -294,7 +345,7 @@ export async function loginWeb(username: string, password: string): Promise<WebL
 
 export async function verifyWebAuth(): Promise<WebAuthSession> {
     if (!isWebMode()) {
-        throw new Error('Not supported outside web mode');
+        throwLocalizedError('feature.desktop_only', 'Not supported outside web mode');
     }
 
     return fetchApi('/api/auth/verify', { method: 'GET' });
@@ -394,10 +445,10 @@ const webAdapter: BackendAdapter = {
             body: JSON.stringify({ providerId, sessionId, sourcePath }),
         }),
     launchTerminal: async () => {
-        throw new Error('Not supported in web mode');
+        throwLocalizedError('feature.web_only', 'Not supported in web mode');
     },
     openInFileExplorer: async () => {
-        throw new Error('Not supported in web mode');
+        throwLocalizedError('feature.web_only', 'Not supported in web mode');
     },
 };
 
