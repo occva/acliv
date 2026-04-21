@@ -1,11 +1,7 @@
 # ACLIV (Rust + Tauri)
 
 基于 Tauri 2 + Rust + Svelte 5 的 AI CLI 会话历史查看器。
-```
-演示地址：http://122.152.227.241:17860/
-账号：admin
-密码：308a46225b4f0eb0fa52dc4e47bf5a41a271583555bbba2963e21965ff4c462a
-```
+
 功能
 
 - 支持多 Provider：`claude`、`codex`、`gemini`、`openclaw`、`opencode`
@@ -89,6 +85,14 @@ curl -fsSL https://raw.githubusercontent.com/occva/acliv/master/deploy/install.s
 - 探测常见 provider 历史目录并写入部署配置
 - 拉取 GHCR 预构建镜像并启动服务
 - 输出访问地址和登录凭据
+
+如需关闭 Web 登录验证并直接公网访问，可在 `deploy/.env` 中设置：
+
+```bash
+ACLIV_WEB_AUTH_ENABLED=0
+```
+
+默认不配置时仍然启用账号密码登录，兼容之前的部署；只有手动设置为 `0` / `false` 时才会公开访问。
 
 ## 项目结构
 
