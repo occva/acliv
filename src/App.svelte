@@ -377,6 +377,7 @@
   let isConversationRefreshing = $state(false);
   let authInitialized = $state(!isWebMode);
   let isAuthenticated = $state(!isWebMode);
+  let showAuthCheckingCard = $state(false);
   let loginUsername = $state('admin');
   let loginPassword = $state('');
   let loginError = $state<UiMessage | null>(null);
@@ -400,8 +401,14 @@
   let conversationProgressResizeObserver: ResizeObserver | null = null;
   let conversationProgressFrame = 0;
 
+  function hasStoredWebToken(): boolean {
+    if (!isWebMode) return false;
+    return !!localStorage.getItem(api.WEB_TOKEN_STORAGE_KEY)?.trim();
+  }
+
   async function refreshWebAuthState(): Promise<boolean> {
     if (!isWebMode) return true;
+    showAuthCheckingCard = false;
 
     try {
       const config = await api.getWebAuthConfig();
@@ -415,6 +422,15 @@
         return true;
       }
 
+      if (!hasStoredWebToken()) {
+        authInitialized = true;
+        isAuthenticated = false;
+        loginPassword = '';
+        loginError = null;
+        return false;
+      }
+
+      showAuthCheckingCard = true;
       const session = await api.verifyWebAuth();
       authInitialized = true;
       isAuthenticated = true;
@@ -428,6 +444,8 @@
       loginPassword = '';
       loginError = api.getErrorCode(e) === 'auth.missing_token' ? null : uiMessageFromError(e);
       return false;
+    } finally {
+      showAuthCheckingCard = false;
     }
   }
 
@@ -2313,7 +2331,7 @@
 
 </script>
 
-{#if isWebMode && !authInitialized}
+{#if isWebMode && !authInitialized && showAuthCheckingCard}
 <div class="auth-shell">
   <div class="auth-card auth-card-loading">
     <div class="auth-badge">ACLIV Web</div>
@@ -2321,6 +2339,8 @@
     <p>{t('auth.checking_status_body')}</p>
   </div>
 </div>
+{:else if isWebMode && !authInitialized}
+<div class="auth-shell auth-shell-quiet" aria-hidden="true"></div>
 {:else if isWebMode && !isAuthenticated}
 <div class="auth-shell">
   <button class="action-btn auth-theme-toggle" onclick={toggleTheme} type="button" title={t('common.theme.toggle')}>

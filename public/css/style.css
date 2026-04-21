@@ -885,6 +885,10 @@ body {
         linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
 }
 
+.auth-shell-quiet {
+    background: var(--bg-primary);
+}
+
 .auth-theme-toggle {
     position: absolute;
     top: 24px;
