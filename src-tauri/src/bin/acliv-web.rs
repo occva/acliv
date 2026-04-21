@@ -25,6 +25,7 @@ mod session_manager;
 
 #[derive(Clone)]
 struct AppState {
+    auth_enabled: bool,
     auth_token: String,
     auth_username: String,
     auth_password: String,
@@ -131,6 +132,13 @@ struct AuthVerifyResponse {
     username: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthConfigResponse {
+    auth_enabled: bool,
+    username: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeleteSessionRequest {
@@ -192,6 +200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(17860);
+    let auth_enabled = parse_env_bool("ACLIV_WEB_AUTH_ENABLED", true);
     let auth_username = env::var("ACLIV_WEB_USERNAME")
         .ok()
         .map(|v| v.trim().to_string())
@@ -205,13 +214,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    let (auth_password, password_source) = match (env_password, legacy_token.clone()) {
-        (Some(password), _) => (password, PasswordSource::Env),
-        (None, Some(token)) => (token, PasswordSource::LegacyToken),
-        (None, None) => (generate_secret(18), PasswordSource::Generated),
+    let (auth_password, auth_token, password_source) = if auth_enabled {
+        let (password, source) = match (env_password, legacy_token.clone()) {
+            (Some(password), _) => (password, PasswordSource::Env),
+            (None, Some(token)) => (token, PasswordSource::LegacyToken),
+            (None, None) => (generate_secret(18), PasswordSource::Generated),
+        };
+        let token = legacy_token.unwrap_or_else(|| derive_auth_token(&auth_username, &password));
+        (password, token, Some(source))
+    } else {
+        (String::new(), "auth-disabled".to_string(), None)
     };
-    let auth_token =
-        legacy_token.unwrap_or_else(|| derive_auth_token(&auth_username, &auth_password));
 
     let socket: SocketAddr = format!("{host}:{port}")
         .parse()
@@ -228,22 +241,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ACLIV (Web)");
     println!("Listening on: http://{host}:{port}");
     println!("Frontend dist: {}", frontend_dist.display());
-    println!("Web login username: {}", auth_username);
-    match password_source {
-        PasswordSource::Generated => {
-            println!("Web login password (generated): {}", auth_password);
-            println!("Tip: set ACLIV_WEB_PASSWORD to keep a fixed password across restarts.");
+    println!(
+        "Web authentication: {}",
+        if auth_enabled { "enabled" } else { "disabled" }
+    );
+    if auth_enabled {
+        println!("Web login username: {}", auth_username);
+        match password_source {
+            Some(PasswordSource::Generated) => {
+                println!("Web login password (generated): {}", auth_password);
+                println!("Tip: set ACLIV_WEB_PASSWORD to keep a fixed password across restarts.");
+            }
+            Some(PasswordSource::Env) => {
+                println!("Web login password source: ACLIV_WEB_PASSWORD");
+            }
+            Some(PasswordSource::LegacyToken) => {
+                println!("Web login password source: ACLIV_TOKEN (legacy fallback)");
+                println!("Tip: set ACLIV_WEB_PASSWORD to migrate away from legacy token login.");
+            }
+            None => {}
         }
-        PasswordSource::Env => {
-            println!("Web login password source: ACLIV_WEB_PASSWORD");
-        }
-        PasswordSource::LegacyToken => {
-            println!("Web login password source: ACLIV_TOKEN (legacy fallback)");
-            println!("Tip: set ACLIV_WEB_PASSWORD to migrate away from legacy token login.");
-        }
+    } else {
+        println!("Warning: ACLIV_WEB_AUTH_ENABLED=false. All web routes are publicly accessible.");
     }
 
     let state = AppState {
+        auth_enabled,
         auth_token,
         auth_username,
         auth_password,
@@ -275,6 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let api_routes = Router::new()
         .route("/health", get(health))
+        .route("/auth/config", get(get_auth_config))
         .route("/auth/login", post(login_auth))
         .merge(protected_routes);
 
@@ -349,6 +373,25 @@ fn derive_auth_token(username: &str, password: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn parse_env_bool(key: &str, default: bool) -> bool {
+    let Ok(value) = env::var(key) else {
+        return default;
+    };
+
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" => default,
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => {
+            println!(
+                "Invalid {key}={value:?}. Expected one of 1/0/true/false/yes/no/on/off. Using default: {default}."
+            );
+            default
+        }
+    }
+}
+
 fn render_spa_shell(index_html: &Path) -> Result<Html<String>, AppError> {
     let html = load_spa_shell(index_html)
         .map_err(|e| AppError::internal(format!("Failed to load SPA shell: {e}")))?;
@@ -370,6 +413,16 @@ async fn login_auth(
     State(state): State<AppState>,
     Json(payload): Json<AuthLoginRequest>,
 ) -> Result<Json<ApiResult<AuthLoginResponse>>, AppError> {
+    if !state.auth_enabled {
+        return Ok(Json(ApiResult {
+            ok: true,
+            data: AuthLoginResponse {
+                token: state.auth_token.clone(),
+                username: state.auth_username.clone(),
+            },
+        }));
+    }
+
     validate_non_empty("username", &payload.username)?;
     validate_non_empty("password", &payload.password)?;
 
@@ -391,6 +444,16 @@ async fn login_auth(
     }))
 }
 
+async fn get_auth_config(State(state): State<AppState>) -> Json<ApiResult<AuthConfigResponse>> {
+    Json(ApiResult {
+        ok: true,
+        data: AuthConfigResponse {
+            auth_enabled: state.auth_enabled,
+            username: state.auth_username,
+        },
+    })
+}
+
 async fn verify_auth(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResult<AuthVerifyResponse>>, AppError> {
@@ -407,6 +470,10 @@ async fn require_auth(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    if !state.auth_enabled {
+        return next.run(request).await;
+    }
+
     let authorized = request
         .headers()
         .get(header::AUTHORIZATION)
