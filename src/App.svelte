@@ -2737,7 +2737,7 @@
                     ></button>
                 {/each}
                 <div class="detail-progress-directory">
-                    <div class="detail-progress-directory-title">{t('detail.user_directory')}</div>
+                    <div class="detail-progress-directory-title">{t('detail.conversation_progress')}</div>
                     <div class="detail-progress-directory-list">
                         {#each conversationProgressAnchors as anchor}
                             <button
