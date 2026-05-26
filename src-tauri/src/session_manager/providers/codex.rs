@@ -21,6 +21,13 @@ static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
         .unwrap()
 });
+static ENVIRONMENT_CONTEXT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<environment_context>[\s\S]*?</environment_context>").unwrap());
+static USER_SHELL_COMMAND_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<user_shell_command>[\s\S]*?</user_shell_command>").unwrap());
+static AGENTS_INSTRUCTIONS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?im)^\s*#\s*(?:AGENTS|CLAUDE|AGENT)\.md instructions[^\n]*(?:\n|$)").unwrap()
+});
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let root = get_codex_sessions_dir();
@@ -76,7 +83,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                     .and_then(Value::as_str)
                     .unwrap_or("unknown")
                     .to_string();
-                let content = payload.get("content").map(extract_text).unwrap_or_default();
+                let content = extract_message_content(payload.get("content"), &role);
                 if content.trim().is_empty() {
                     continue;
                 }
@@ -141,6 +148,74 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+fn extract_message_content(content: Option<&Value>, role: &str) -> String {
+    if role.eq_ignore_ascii_case("user") || role.eq_ignore_ascii_case("human") {
+        content.map(extract_user_message_text).unwrap_or_default()
+    } else {
+        content.map(extract_text).unwrap_or_default()
+    }
+}
+
+fn extract_user_message_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => clean_user_message_text(text),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(extract_user_message_text_from_item)
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                return clean_user_message_text(text);
+            }
+            if let Some(text) = map.get("input_text").and_then(Value::as_str) {
+                return clean_user_message_text(text);
+            }
+            if let Some(text) = map.get("output_text").and_then(Value::as_str) {
+                return clean_user_message_text(text);
+            }
+            map.get("content")
+                .map(extract_user_message_text)
+                .unwrap_or_default()
+        }
+        _ => String::new(),
+    }
+}
+
+fn extract_user_message_text_from_item(item: &Value) -> Option<String> {
+    let text = match item {
+        Value::String(text) => clean_user_message_text(text),
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                clean_user_message_text(text)
+            } else if let Some(text) = map.get("input_text").and_then(Value::as_str) {
+                clean_user_message_text(text)
+            } else if let Some(text) = map.get("output_text").and_then(Value::as_str) {
+                clean_user_message_text(text)
+            } else if let Some(content) = map.get("content") {
+                extract_user_message_text(content)
+            } else {
+                String::new()
+            }
+        }
+        _ => String::new(),
+    };
+
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn clean_user_message_text(text: &str) -> String {
+    let without_agents = AGENTS_INSTRUCTIONS_LINE_RE.replace_all(text, " ");
+    let without_env = ENVIRONMENT_CONTEXT_RE.replace_all(without_agents.as_ref(), " ");
+    let without_shell_command = USER_SHELL_COMMAND_RE.replace_all(without_env.as_ref(), " ");
+    without_shell_command.trim().to_string()
 }
 
 fn format_function_call_content(payload: &Value) -> String {
@@ -524,6 +599,42 @@ mod tests {
         assert_eq!(messages[2].role, "tool");
         assert_eq!(messages[2].name.as_deref(), Some("shell_command"));
         assert_eq!(messages[2].searchable_text(), "");
+    }
+
+    #[test]
+    fn load_messages_strips_injected_user_context_fragments() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        let content = [
+            r##"{"timestamp":"2026-04-10T18:55:08.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for d:\\code"},{"type":"input_text","text":"<environment_context>\n  <cwd>d:\\code</cwd>\n  <shell>powershell</shell>\n</environment_context>"},{"type":"input_text","text":"请改界面"}]}}"##,
+            r#"{"timestamp":"2026-03-29T06:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"已完成检查"}]}}"#,
+        ]
+        .join("\n");
+        fs::write(&path, format!("{content}\n")).expect("write codex fixture");
+
+        let messages = load_messages(&path).expect("load messages");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "请改界面");
+    }
+
+    #[test]
+    fn load_messages_skips_context_only_user_messages() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        let content = [
+            r##"{"timestamp":"2026-04-03T08:44:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for D:\\code"}]}}"##,
+            r##"{"timestamp":"2026-04-03T08:44:04.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>D:\\code</cwd>\n</environment_context>"}]}}"##,
+            r##"{"timestamp":"2026-04-03T08:44:05.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"请检查发布流程哪里有问题"}]}}"##,
+        ]
+        .join("\n");
+        fs::write(&path, format!("{content}\n")).expect("write codex fixture");
+
+        let messages = load_messages(&path).expect("load messages");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "请检查发布流程哪里有问题");
     }
 
     #[test]
