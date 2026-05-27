@@ -5,12 +5,26 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 1.0.9 or v1.0.9"
+        required: true
+      platform:
+        description: "Platform to build"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
 
 permissions:
   contents: write
 
 jobs:
   windows-release:
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows'
     runs-on: windows-latest
     env:
       CARGO_TERM_COLOR: always
@@ -39,7 +53,10 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $tag = "${env:GITHUB_REF_NAME}"
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${env:GITHUB_REF_NAME}" }
+          if (-not $tag.StartsWith('v')) {
+            $tag = "v$tag"
+          }
           if (-not $tag.StartsWith('v')) {
             throw "Expected tag ref like v1.2.3, got: $tag"
           }
@@ -71,7 +88,8 @@ jobs:
             release/v${{ steps.version.outputs.version }}/acliv-v${{ steps.version.outputs.version }}-x64-en-us.msi
 
   macos-release:
-    runs-on: macos-13
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos'
+    runs-on: macos-latest
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -94,7 +112,14 @@ jobs:
         id: version
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.version }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if [[ "$tag" != v* ]]; then
+            tag="v${tag}"
+          fi
           if [[ "$tag" != v* ]]; then
             echo "Expected tag ref like v1.2.3, got: $tag" >&2
             exit 1
