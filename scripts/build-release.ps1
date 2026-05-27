@@ -195,7 +195,6 @@ function Get-ReleaseNotesChanges {
 
 function Get-ReleaseNotesVerification {
   return @(
-    '- Ran `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`',
     '- Ran `npm run tauri build`',
     '- Collected standard release artifacts into the `release/` directory'
   )
@@ -230,7 +229,6 @@ $packageLock = Join-Path $RepoRoot 'package-lock.json'
 $cargoToml = Join-Path $RepoRoot 'src-tauri\Cargo.toml'
 $tauriConfig = Join-Path $RepoRoot 'src-tauri\tauri.conf.json'
 $desktopTargetExe = Join-Path $RepoRoot 'src-tauri\target\release\acliv.exe'
-$webTargetExe = Join-Path $RepoRoot 'src-tauri\target\release\acliv-web.exe'
 
 Invoke-Step -Name 'sync version files' -Action {
   Set-JsonVersion -FilePath $packageJson -NewVersion $Version
@@ -243,15 +241,10 @@ Invoke-Step -Name 'sync version files' -Action {
 
 Invoke-Step -Name 'clean previous build output' -Action {
   Stop-RepoProcess -ExecutablePath $desktopTargetExe
-  Stop-RepoProcess -ExecutablePath $webTargetExe
   if (Test-Path 'dist') { Remove-Item -LiteralPath 'dist' -Recurse -Force }
   if (Test-Path 'src-tauri\target\release') { Remove-Item -LiteralPath 'src-tauri\target\release' -Recurse -Force }
   if (Test-Path $releaseDir) { Remove-Item -LiteralPath $releaseDir -Recurse -Force }
   New-Item -ItemType Directory -Path $releaseDir | Out-Null
-}
-
-Invoke-Step -Name 'build web binary' -Action {
-  cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web
 }
 
 Invoke-Step -Name 'build desktop bundle' -Action {
@@ -265,15 +258,11 @@ Invoke-Step -Name 'build desktop bundle' -Action {
 $desktopExe = Join-Path $RepoRoot 'src-tauri\target\release\acliv.exe'
 $setupExe = Find-SingleFile -Glob (Join-Path $RepoRoot 'src-tauri\target\release\bundle\nsis\*.exe')
 $msiFile = Find-SingleFile -Glob (Join-Path $RepoRoot 'src-tauri\target\release\bundle\msi\*.msi')
-$webBinary = Join-Path $RepoRoot 'src-tauri\target\release\acliv-web.exe'
 
 Invoke-Step -Name 'collect release artifacts' -Action {
   Copy-Artifact -Source $desktopExe -Destination (Join-Path $releaseDir "acliv-v$Version.exe")
   Copy-Artifact -Source $setupExe -Destination (Join-Path $releaseDir "acliv-v$Version-x64-setup.exe")
   Copy-Artifact -Source $msiFile -Destination (Join-Path $releaseDir "acliv-v$Version-x64-en-us.msi")
-  if (Test-Path $webBinary) {
-    Copy-Artifact -Source $webBinary -Destination (Join-Path $releaseDir "acliv-web-v$Version.exe")
-  }
 }
 
 $releaseNotesPath = Join-Path $releaseDir "release-notes-v$Version.md"

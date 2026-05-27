@@ -89,7 +89,16 @@ jobs:
 
   macos-release:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos'
-    runs-on: macos-latest
+    name: macos-release (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-latest
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -134,9 +143,6 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/check.ps1 -Scope release
 
-      - name: Build web binary
-        run: cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web
-
       - name: Build macOS bundle
         run: npm run tauri build -- --bundles app,dmg
 
@@ -159,8 +165,8 @@ jobs:
             exit 1
           fi
 
-          ditto -c -k --sequesterRsrc --keepParent "$app_path" "$release_dir/acliv-v${version}-macos-x64.app.zip"
-          cp "$dmg_path" "$release_dir/acliv-v${version}-macos-x64.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "$release_dir/acliv-v${version}-macos-${{ matrix.arch }}.app.zip"
+          cp "$dmg_path" "$release_dir/acliv-v${version}-macos-${{ matrix.arch }}.dmg"
 
       - name: Publish macOS assets
         uses: softprops/action-gh-release@v2
@@ -168,5 +174,5 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           files: |
-            release/v${{ steps.version.outputs.version }}/acliv-v${{ steps.version.outputs.version }}-macos-x64.app.zip
-            release/v${{ steps.version.outputs.version }}/acliv-v${{ steps.version.outputs.version }}-macos-x64.dmg
+            release/v${{ steps.version.outputs.version }}/acliv-v${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}.app.zip
+            release/v${{ steps.version.outputs.version }}/acliv-v${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}.dmg

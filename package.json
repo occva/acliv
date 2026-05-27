@@ -8,8 +8,8 @@
         "build": "vite build",
         "preview": "vite preview",
         "tauri": "tauri",
-        "web:start": "npm run build && cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web",
-        "web:build": "npm run build && cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web"
+        "web:start": "npm run build && cargo run --manifest-path src-tauri/web/Cargo.toml",
+        "web:build": "npm run build && cargo build --release --manifest-path src-tauri/web/Cargo.toml"
     },
     "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^5.1.1",

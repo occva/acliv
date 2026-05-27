@@ -42,7 +42,7 @@ if ($Scope -in @('push', 'release')) {
 
 if ($Scope -eq 'release') {
   Invoke-Step -Name 'cargo check (web)' -Action {
-    cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features web
+    cargo check --manifest-path src-tauri/web/Cargo.toml
   }
 }
 

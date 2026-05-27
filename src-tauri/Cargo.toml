@@ -8,11 +8,11 @@ repository = ""
 edition = "2021"
 rust-version = "1.77.2"
 default-run = "acliv"
+autobins = false
 
 [features]
 default = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-build"]
-web = ["dep:axum", "dep:tokio", "dep:tower-http"]
 
 [[bin]]
 name = "acliv"
@@ -22,11 +22,6 @@ required-features = ["desktop"]
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
-
-[[bin]]
-name = "acliv-web"
-path = "src/bin/acliv-web.rs"
-required-features = ["web"]
 
 [[bin]]
 name = "search-benchmark"
