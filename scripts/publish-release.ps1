@@ -26,75 +26,78 @@ function Invoke-Step {
   }
 }
 
+function Assert-Version {
+  param(
+    [string]$FilePath,
+    [string]$Pattern,
+    [string]$ExpectedVersion
+  )
+
+  $content = Get-Content $FilePath -Raw
+  if ($content -notmatch $Pattern) {
+    throw "Unable to read version from $FilePath"
+  }
+  $actualVersion = $Matches[1]
+  if ($actualVersion -ne $ExpectedVersion) {
+    throw "Version mismatch in $FilePath. Expected $ExpectedVersion, got $actualVersion."
+  }
+}
+
+if ($Version.StartsWith('v')) {
+  $Version = $Version.Substring(1)
+}
 $tag = "v$Version"
-$releaseDir = Join-Path $RepoRoot "release\$tag"
-$desktopExe = Join-Path $releaseDir "acliv-$tag.exe"
-$setupExe = Join-Path $releaseDir "acliv-$tag-x64-setup.exe"
-$msiFile = Join-Path $releaseDir "acliv-$tag-x64-en-us.msi"
-$releaseNotes = Join-Path $releaseDir "release-notes-$tag.md"
-$releaseNotesValidator = Join-Path $RepoRoot 'scripts\assert-release-notes.ps1'
+
+Invoke-Step -Name 'verify clean worktree' -Action {
+  $status = git status --porcelain
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to read git status.'
+  }
+  if ($status) {
+    throw 'Worktree is not clean. Commit or stash changes before publishing a release tag.'
+  }
+}
+
+Invoke-Step -Name 'verify version files' -Action {
+  Assert-Version -FilePath 'package.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
+  Assert-Version -FilePath 'package-lock.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
+  Assert-Version -FilePath 'src-tauri\Cargo.toml' -Pattern '(?m)^version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
+  Assert-Version -FilePath 'src-tauri\tauri.conf.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
+}
 
 Invoke-Step -Name 'verify gh auth' -Action {
   gh auth status
 }
 
-foreach ($path in @($desktopExe, $setupExe, $msiFile, $releaseNotes)) {
-  if (-not (Test-Path $path)) {
-    throw "Missing release artifact: $path"
-  }
-}
-
-Invoke-Step -Name 'validate release notes' -Action {
-  powershell -NoProfile -ExecutionPolicy Bypass -File $releaseNotesValidator -Path $releaseNotes
-}
-
-Invoke-Step -Name 'ensure git tag exists' -Action {
-  $existingTag = git tag --list $tag
+Invoke-Step -Name 'ensure release tag is new' -Action {
+  $existingLocalTag = git tag --list $tag
   if ($LASTEXITCODE -ne 0) {
-    throw "Failed to inspect existing tag: $tag"
+    throw "Failed to inspect local tags."
   }
-  if (-not ($existingTag | Where-Object { $_ -eq $tag })) {
-    git tag $tag
+  if ($existingLocalTag | Where-Object { $_ -eq $tag }) {
+    throw "Local tag already exists: $tag"
+  }
+
+  $existingRemoteTag = git ls-remote --tags origin "refs/tags/$tag"
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to inspect remote tags."
+  }
+  if ($existingRemoteTag) {
+    throw "Remote tag already exists: $tag"
   }
 }
 
 Invoke-Step -Name 'push commits' -Action {
-  git push
+  git push origin HEAD
 }
 
-Invoke-Step -Name 'push tag' -Action {
+Invoke-Step -Name 'create release tag' -Action {
+  git tag $tag
+}
+
+Invoke-Step -Name 'push release tag' -Action {
   git push origin $tag
 }
 
-$releaseExists = $false
-$releaseTags = gh release list --repo occva/acliv --limit 100 --json tagName --jq ".[].tagName"
-if ($LASTEXITCODE -ne 0) {
-  throw "Failed to inspect existing GitHub releases."
-}
-if ($releaseTags -split "`r?`n" | Where-Object { $_ -eq $tag }) {
-  $releaseExists = $true
-}
-
-if (-not $releaseExists) {
-  Invoke-Step -Name 'create GitHub release' -Action {
-    gh release create $tag `
-      $desktopExe `
-      $setupExe `
-      $msiFile `
-      --repo occva/acliv `
-      --notes-file $releaseNotes `
-      --title $tag
-  }
-}
-else {
-  Invoke-Step -Name 'upload release assets' -Action {
-    gh release upload $tag `
-      $desktopExe `
-      $setupExe `
-      $msiFile `
-      --repo occva/acliv `
-      --clobber
-  }
-}
-
-Write-Host "GitHub release published: $tag" -ForegroundColor Green
+Write-Host "Release tag pushed: $tag" -ForegroundColor Green
+Write-Host "GitHub Actions will build and upload all desktop release assets." -ForegroundColor Green

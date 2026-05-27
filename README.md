@@ -69,7 +69,9 @@ npm exec tauri build -- --no-bundle
 发布打包：
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>
 ```
 
 ## Linux 部署

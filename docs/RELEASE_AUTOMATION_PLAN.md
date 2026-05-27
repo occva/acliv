@@ -207,10 +207,10 @@
 
 约束：
 
-- 发布前必须基于 `build-release.ps1` 已产出的本地文件
+- 发布前必须完成本地检查；`build-release.ps1` 产物仅用于验证，不作为正式上传来源
 - 失败时保留错误输出，不静默吞掉
 - 不负责重新编译
-- `publish-release.ps1` 只上传标准命名文件，不直接上传 `src-tauri/target/release/bundle/**` 下的原始产物
+- `publish-release.ps1` 只负责推送 `v<version>` tag；正式产物全部由 GitHub Actions 构建并上传
 
 ## 5. Hook 规则
 
@@ -331,7 +331,7 @@ release body 来源：
 - 误提交 `release/*.exe` 或 `dist/*` 会被拦截
 - `scripts/check.ps1 -Scope release` 全通过
 - `scripts/build-release.ps1 -Version 1.0.3` 能产出本地发布包
-- `scripts/publish-release.ps1 -Version 1.0.3` 能创建 tag 并发布 GitHub Release
+- `scripts/publish-release.ps1 -Version 1.0.3` 能创建并推送 tag，触发 GitHub Actions 发布
 - `release/v1.0.3/` 目录下只保留该版本的标准命名产物，不保留临时重命名缓存
 - 推送 `v1.0.3` 后：
   - 桌面 release workflow 成功
