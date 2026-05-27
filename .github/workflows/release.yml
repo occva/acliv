@@ -134,6 +134,9 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/check.ps1 -Scope release
 
+      - name: Build web binary
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web
+
       - name: Build macOS bundle
         run: npm run tauri build -- --bundles app,dmg
 
