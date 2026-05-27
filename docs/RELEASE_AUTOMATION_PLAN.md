@@ -26,7 +26,7 @@
 
 - 当前项目已有本地桌面可执行文件构建链路：`npm exec tauri build -- --no-bundle`
 - 当前项目已有桌面端安装包构建链路：`npm run tauri build`
-- 当前项目已有 Web 构建链路：`cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`
+- 当前项目已有 Web 构建链路：`cargo build --release --manifest-path src-tauri/web/Cargo.toml`
 - 当前项目可通过 `build-release.ps1 -ReleaseNotesMode git` 在 CI 中基于近期提交生成可发布的 release notes
 - 当前项目已有 Docker 发布 workflow：`.github/workflows/docker-release.yml`
 - 当前项目已有 GHCR 镜像发布路径，镜像名为 `ghcr.io/occva/acliv`
@@ -145,7 +145,7 @@
   - 再加 `cargo test --manifest-path src-tauri/Cargo.toml`
 - `release`
   - 包含 `push`
-  - 再加 `cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features web`
+  - 再加 `cargo check --manifest-path src-tauri/web/Cargo.toml`
 
 约束：
 
@@ -171,7 +171,7 @@
    - `src-tauri/target/release`
 4. 执行构建：
    - `npm run tauri build`
-   - `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web`
+   - `cargo build --release --manifest-path src-tauri/web/Cargo.toml`
 5. 复制产物到 `release/<version>/`
 6. 生成：
    - `release/<version>/release-notes-v<version>.md`
@@ -244,7 +244,7 @@
 发布前保底检查：
 
 - `cargo test --manifest-path src-tauri/Cargo.toml`
-- `cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features web`
+- `cargo check --manifest-path src-tauri/web/Cargo.toml`
 
 明确不做的事：
 

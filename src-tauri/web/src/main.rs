@@ -16,11 +16,11 @@ use sha2::{Digest, Sha256};
 use tokio::task::spawn_blocking;
 use tower_http::services::{ServeDir, ServeFile};
 
-#[path = "../paths.rs"]
+#[path = "../../src/paths.rs"]
 mod paths;
-#[path = "../search_index/mod.rs"]
+#[path = "../../src/search_index/mod.rs"]
 mod search_index;
-#[path = "../session_manager/mod.rs"]
+#[path = "../../src/session_manager/mod.rs"]
 mod session_manager;
 
 #[derive(Clone)]

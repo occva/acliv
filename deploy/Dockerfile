@@ -33,15 +33,16 @@ COPY src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/build.rs ./src-tauri/
 RUN mkdir -p /app/src-tauri/src/bin \
     && printf 'pub fn docker_build_cache_warmup() {}\n' > /app/src-tauri/src/lib.rs \
     && printf 'fn main() {}\n' > /app/src-tauri/src/main.rs \
-    && printf 'fn main() {}\n' > /app/src-tauri/src/bin/acliv-web.rs
+    && mkdir -p /app/src-tauri/web/src \
+    && printf 'fn main() {}\n' > /app/src-tauri/web/src/main.rs
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    sh -ec 'cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web'
+    sh -ec 'cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml'
 
 COPY src-tauri ./src-tauri
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    sh -ec 'cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin acliv-web'
+    sh -ec 'cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml'
 
 FROM ${RUNTIME_IMAGE}
 WORKDIR /app
@@ -51,7 +52,7 @@ RUN apk add --no-cache ca-certificates curl su-exec \
     && adduser -u 1000 -S -G app app
 
 COPY --from=frontend-builder --chown=app:app /app/dist /app/dist
-COPY --from=backend-builder --chown=app:app /app/src-tauri/target/release/acliv-web /app/acliv-web
+COPY --from=backend-builder --chown=app:app /app/src-tauri/web/target/release/acliv-web /app/acliv-web
 COPY --chown=app:app deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh \

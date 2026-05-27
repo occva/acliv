@@ -144,10 +144,6 @@ Expected desktop artifacts:
 - `acliv-v<version>-x64-setup.exe`
 - `acliv-v<version>-x64-en-us.msi`
 
-Optional additional artifact:
-
-- `acliv-web-v<version>.exe`
-
 Expected notes file:
 
 - `release-notes-v<version>.md`
@@ -214,9 +210,9 @@ Do not rely on naive `ConvertFrom-Json` round-tripping for `package-lock.json`. 
 
 If `src-tauri/target/release/acliv.exe` is running, cleanup can fail. Prefer the project release script, which already stops repo-local release processes before cleaning.
 
-### Build order matters
+### Desktop and Web artifacts are separate
 
-This repo's Tauri bundle includes `acliv-web.exe`. The web binary must exist before `tauri build` runs, otherwise WiX `light.exe` can fail while packaging MSI.
+The Tauri desktop bundle must not include `acliv-web`. Build Web artifacts separately with `src-tauri/web/Cargo.toml`.
 
 ### Local desktop rebuilds are not cargo builds
 

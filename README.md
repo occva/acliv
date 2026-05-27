@@ -119,8 +119,7 @@ ACLIV_WEB_AUTH_ENABLED=0
 │   │   ├── cmd.rs                # Tauri commands
 │   │   ├── watcher.rs            # 本地 session 文件监听与索引同步
 │   │   ├── paths.rs              # 各 CLI 默认目录解析
-│   │   ├── bin/
-│   │   │   └── acliv-web.rs      # Web 模式入口（二进制）
+│   ├── web/                      # Web server 独立 Cargo manifest
 │   │   ├── session_manager/      # 统一 provider 扫描与消息读取
 │   │   │   ├── mod.rs
 │   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode
