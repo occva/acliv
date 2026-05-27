@@ -29,11 +29,8 @@ ENV CARGO_NET_RETRY=8 \
     CARGO_HTTP_TIMEOUT=600 \
     CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
-COPY src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/build.rs ./src-tauri/
-RUN mkdir -p /app/src-tauri/src/bin \
-    && printf 'pub fn docker_build_cache_warmup() {}\n' > /app/src-tauri/src/lib.rs \
-    && printf 'fn main() {}\n' > /app/src-tauri/src/main.rs \
-    && mkdir -p /app/src-tauri/web/src \
+COPY src-tauri/web/Cargo.toml src-tauri/web/Cargo.lock ./src-tauri/web/
+RUN mkdir -p /app/src-tauri/web/src \
     && printf 'fn main() {}\n' > /app/src-tauri/web/src/main.rs
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
