@@ -70,6 +70,17 @@ export interface SearchIndexStatus {
     }>;
 }
 
+export interface ProviderPathInfo {
+    providerId: string;
+    name: string;
+    path: string;
+    exists: boolean;
+    readable: boolean;
+    envVar: string;
+    source: 'env' | 'override' | 'default' | string;
+    overridePath?: string;
+}
+
 export interface RebuildSearchIndexResult {
     dbPath: string;
     sourcesCount: number;
@@ -164,6 +175,8 @@ interface ApiResponse<T> {
     code?: string;
 }
 
+export type TerminalKind = 'cmd' | 'powershell' | 'terminal';
+
 type ApiClientError = Error & {
     code?: string;
 };
@@ -185,6 +198,10 @@ const ERROR_KEY_BY_CODE: Record<string, TranslationKey> = {
 
 interface BackendAdapter {
     listSessions: () => Promise<SessionMeta[]>;
+    listProviderPaths: () => Promise<ProviderPathInfo[]>;
+    setProviderPath: (providerId: string, path: string) => Promise<ProviderPathInfo>;
+    resetProviderPath: (providerId: string) => Promise<ProviderPathInfo>;
+    pickProviderDirectory: (providerId: string) => Promise<string | null>;
     listIndexedSessions: (
         providerId?: string | null,
         limit?: number | null,
@@ -219,7 +236,7 @@ interface BackendAdapter {
     launchTerminal: (
         command: string,
         cwd?: string | null,
-        terminalKind?: 'cmd' | 'powershell' | null,
+        terminalKind?: TerminalKind | null,
     ) => Promise<boolean>;
     openInFileExplorer: (path: string) => Promise<boolean>;
 }
@@ -381,6 +398,13 @@ export async function verifyWebAuth(): Promise<WebAuthSession> {
 
 const tauriAdapter: BackendAdapter = {
     listSessions: () => invoke('list_sessions'),
+    listProviderPaths: () => invoke('list_provider_paths'),
+    setProviderPath: (providerId, path) =>
+        invoke('set_provider_path', { providerId, path }),
+    resetProviderPath: (providerId) =>
+        invoke('reset_provider_path', { providerId }),
+    pickProviderDirectory: (providerId) =>
+        invoke('pick_provider_directory', { providerId }),
     listIndexedSessions: (providerId, limit) =>
         invoke('list_indexed_sessions', { providerId, limit }),
     listIndexedSessionsPage: (providerId, projectPath, limit, offset) =>
@@ -408,6 +432,20 @@ const tauriAdapter: BackendAdapter = {
 
 const webAdapter: BackendAdapter = {
     listSessions: () => fetchApi('/api/sessions', { method: 'GET' }),
+    listProviderPaths: () => fetchApi('/api/provider/paths', { method: 'GET' }),
+    setProviderPath: (providerId, path) =>
+        fetchApi('/api/provider/path', {
+            method: 'POST',
+            body: JSON.stringify({ providerId, path }),
+        }),
+    resetProviderPath: (providerId) =>
+        fetchApi('/api/provider/path/reset', {
+            method: 'POST',
+            body: JSON.stringify({ providerId }),
+        }),
+    pickProviderDirectory: async () => {
+        throwLocalizedError('feature.web_only', 'Not supported in web mode');
+    },
     listIndexedSessions: (providerId, limit) => {
         const params = new URLSearchParams();
         if (providerId?.trim()) params.set('providerId', providerId.trim());
@@ -491,6 +529,25 @@ export async function listSessions(): Promise<SessionMeta[]> {
     return getAdapter().listSessions();
 }
 
+export async function listProviderPaths(): Promise<ProviderPathInfo[]> {
+    return getAdapter().listProviderPaths();
+}
+
+export async function setProviderPath(
+    providerId: string,
+    path: string,
+): Promise<ProviderPathInfo> {
+    return getAdapter().setProviderPath(providerId, path);
+}
+
+export async function resetProviderPath(providerId: string): Promise<ProviderPathInfo> {
+    return getAdapter().resetProviderPath(providerId);
+}
+
+export async function pickProviderDirectory(providerId: string): Promise<string | null> {
+    return getAdapter().pickProviderDirectory(providerId);
+}
+
 /** 获取指定会话的消息列表 */
 export async function getSessionMessages(
     providerId: string,
@@ -572,7 +629,7 @@ export async function deleteSession(
 export async function launchTerminal(
     command: string,
     cwd?: string | null,
-    terminalKind?: 'cmd' | 'powershell' | null,
+    terminalKind?: TerminalKind | null,
 ): Promise<boolean> {
     return getAdapter().launchTerminal(command, cwd, terminalKind);
 }

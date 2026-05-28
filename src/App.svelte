@@ -117,7 +117,7 @@
   }
   type SearchTimeRange = 'all' | '7d' | '30d' | '90d';
   type SearchSort = 'relevance' | 'recent';
-  type IndexModalTab = 'overview' | 'sessions';
+  type IndexModalTab = 'overview' | 'sessions' | 'providers';
   type IndexLibraryItem = api.IndexedSession;
   type RouteMode = 'push' | 'replace' | 'none';
   type MarkdownComponentType = typeof import('./lib/components/Markdown.svelte').default;
@@ -189,6 +189,9 @@
   // ---- 适配函数 ----
   const GEMINI_GROUP = 'Gemini Sessions';
   const isWebMode = api.isWebMode();
+  const isMacDesktop = !isWebMode
+      && typeof document !== 'undefined'
+      && document.documentElement.dataset.platform === 'macos';
   const PROVIDER_GROUPS: Record<string, string> = {
     gemini: GEMINI_GROUP,
     codex: 'Codex Sessions',
@@ -304,12 +307,20 @@
         .filter(s => s.providerId === currentSource)
         .reduce((sum, s) => sum + sessionMessageCount(s), 0),
     };
-    if (currentProject && !projs.some(project => project.name === currentProject)) {
+
+    const currentProjectStillExists =
+      currentProject && projs.some(project => project.name === currentProject);
+
+    if (currentProject && !currentProjectStillExists) {
       currentProject = null;
       currentConversation = null;
-      conversations = [];
     }
+
     if (!currentProject && projs.length > 0) selectProject(projs[0].name, false);
+
+    conversations = currentProject
+      ? buildConversations(allSessions, currentSource, currentProject)
+      : [];
   }
 
   // --- State (Svelte 5 Runes) ---
@@ -337,6 +348,10 @@
   let searchIndexReady = $state(false);
   let searchIndexBootstrapping = $state(false);
   let searchIndexStatus = $state<api.SearchIndexStatus | null>(null);
+  let providerPaths = $state<api.ProviderPathInfo[]>([]);
+  let providerPathDrafts = $state<Record<string, string>>({});
+  let isProviderPathsLoading = $state(false);
+  let providerPathSaving = $state<string | null>(null);
   let indexLibraryItems = $state<IndexLibraryItem[]>([]);
   let indexProjectOptions = $state<api.IndexedProjectOption[]>([]);
   let indexLibraryTotalCount = $state(0);
@@ -755,6 +770,25 @@
     }
   }
 
+  async function refreshProviderPaths() {
+    isProviderPathsLoading = true;
+    try {
+      const paths = await api.listProviderPaths();
+      providerPaths = paths;
+      providerPathDrafts = Object.fromEntries(
+        paths.map(item => [item.providerId, item.path]),
+      );
+    } catch (e) {
+      if (handleWebUnauthorized(e)) {
+        return;
+      }
+      console.error('Failed to load provider paths:', e);
+      showFeedback(uiMessageFromError(e), 'error');
+    } finally {
+      isProviderPathsLoading = false;
+    }
+  }
+
   function getSearchSinceTs(range: SearchTimeRange): number | null {
     if (range === 'all') return null;
 
@@ -905,6 +939,76 @@
         showToast = false;
       }, 2500);
       isIndexActionRunning = false;
+    }
+  }
+
+  function updateProviderPathDraft(providerId: string, path: string) {
+    providerPathDrafts = {
+      ...providerPathDrafts,
+      [providerId]: path,
+    };
+  }
+
+  async function saveProviderPath(providerId: string) {
+    if (providerPathSaving) return;
+    const path = providerPathDrafts[providerId]?.trim() ?? '';
+    if (!path) {
+      showFeedback(keyMessage('toast.provider_path_required'), 'error');
+      return;
+    }
+
+    providerPathSaving = providerId;
+    try {
+      await api.setProviderPath(providerId, path);
+      await refreshProviderPaths();
+      await runSearchIndexAction('rebuild');
+      showFeedback(keyMessage('toast.provider_path_saved'), 'success');
+    } catch (e) {
+      if (!handleWebUnauthorized(e)) {
+        console.error('Failed to save provider path:', e);
+        showFeedback(uiMessageFromError(e), 'error');
+      }
+    } finally {
+      providerPathSaving = null;
+    }
+  }
+
+  async function resetProviderPath(providerId: string) {
+    if (providerPathSaving) return;
+
+    providerPathSaving = providerId;
+    try {
+      await api.resetProviderPath(providerId);
+      await refreshProviderPaths();
+      await runSearchIndexAction('rebuild');
+      showFeedback(keyMessage('toast.provider_path_reset'), 'success');
+    } catch (e) {
+      if (!handleWebUnauthorized(e)) {
+        console.error('Failed to reset provider path:', e);
+        showFeedback(uiMessageFromError(e), 'error');
+      }
+    } finally {
+      providerPathSaving = null;
+    }
+  }
+
+  async function chooseProviderDirectory(providerId: string) {
+    if (isWebMode || providerPathSaving) return;
+
+    providerPathSaving = providerId;
+    try {
+      const selected = await api.pickProviderDirectory(providerId);
+      if (!selected) return;
+      updateProviderPathDraft(providerId, selected);
+      await api.setProviderPath(providerId, selected);
+      await refreshProviderPaths();
+      await runSearchIndexAction('rebuild');
+      showFeedback(keyMessage('toast.provider_path_saved'), 'success');
+    } catch (e) {
+      console.error('Failed to choose provider directory:', e);
+      showFeedback(uiMessageFromError(e), 'error');
+    } finally {
+      providerPathSaving = null;
     }
   }
 
@@ -1330,7 +1434,25 @@
       }
   }
 
-  async function openResumeTerminal(kind: 'cmd' | 'powershell') {
+  function fileManagerOpenLabel(): string {
+      return isMacDesktop ? t('actions.open_in_finder') : t('actions.open_in_explorer');
+  }
+
+  function fileManagerOpenedMessage(): UiMessage {
+      return isMacDesktop ? keyMessage('toast.opened_in_finder') : keyMessage('toast.opened_in_explorer');
+  }
+
+  function fileManagerOpenFailedMessage(): UiMessage {
+      return isMacDesktop ? keyMessage('toast.open_finder_failed') : keyMessage('toast.open_explorer_failed');
+  }
+
+  function terminalOpenedMessage(kind: api.TerminalKind): UiMessage {
+      if (kind === 'cmd') return keyMessage('toast.opened_in_cmd');
+      if (kind === 'powershell') return keyMessage('toast.opened_in_powershell');
+      return keyMessage('toast.opened_in_terminal');
+  }
+
+  async function openResumeTerminal(kind: api.TerminalKind) {
       const target = currentConversation
           ? getSessionById(currentConversation.session_id, currentConversation.source_type)
           : null;
@@ -1349,13 +1471,8 @@
                   console.error('Copy failed before launching PowerShell:', copyError);
               }
           }
-          await api.launchTerminal(target.resumeCommand, target.projectDir, kind);
-          showFeedback(
-              kind === 'cmd'
-                  ? keyMessage('toast.opened_in_cmd')
-                  : keyMessage('toast.opened_in_powershell'),
-              'success',
-          );
+          await api.launchTerminal(target.resumeCommand, target.cwd ?? target.projectDir, kind);
+          showFeedback(terminalOpenedMessage(kind), 'success');
       } catch (e) {
           console.error('Launch terminal failed:', e);
           showFeedback(keyMessage('toast.launch_terminal_failed'), 'error');
@@ -1388,10 +1505,10 @@
 
       try {
           await api.openInFileExplorer(target.projectDir);
-          showFeedback(keyMessage('toast.opened_in_explorer'), 'success');
+          showFeedback(fileManagerOpenedMessage(), 'success');
       } catch (e) {
-          console.error('Open in File Explorer failed:', e);
-          showFeedback(keyMessage('toast.open_explorer_failed'), 'error');
+          console.error('Open in file manager failed:', e);
+          showFeedback(fileManagerOpenFailedMessage(), 'error');
       }
   }
   function mergeMessageContent(current: string, next: string) {
@@ -2154,6 +2271,8 @@
       indexModalTab = tab;
       if (tab === 'sessions') {
           await refreshIndexLibrary(false, true);
+      } else if (tab === 'providers') {
+          await refreshProviderPaths();
       }
   }
 
@@ -2320,6 +2439,23 @@
           openclaw: 'OpenClaw',
           opencode: 'OpenCode',
       } as Record<string, string>)[providerId] ?? providerId;
+  }
+
+  function providerPathSourceLabel(source: string): string {
+      if (source === 'env') return t('index.path_source.env');
+      if (source === 'override') return t('index.path_source.override');
+      if (source === 'default') return t('index.path_source.default');
+      return source;
+  }
+
+  async function openProviderPath(path: string) {
+      try {
+          await api.openInFileExplorer(path);
+          showFeedback(fileManagerOpenedMessage(), 'success');
+      } catch (e) {
+          console.error('Open provider path failed:', e);
+          showFeedback(fileManagerOpenFailedMessage(), 'error');
+      }
   }
 
   function formatConversationSessionId(sessionId: string): string {
@@ -2604,7 +2740,7 @@
                                     </button>
                                     {#if !isWebMode}
                                         <button type="button" onclick={openProjectInExplorer}>
-                                            {t('actions.open_in_explorer')}
+                                            {fileManagerOpenLabel()}
                                         </button>
                                     {/if}
                                 </div>
@@ -2634,12 +2770,18 @@
                                                 {@html getIcon('terminal', 14)}
                                             </button>
                                             <div class="hover-menu">
-                                                <button type="button" onclick={() => openResumeTerminal('cmd')}>
-                                                    {t('detail.open_in_cmd')}
-                                                </button>
-                                                <button type="button" onclick={() => openResumeTerminal('powershell')}>
-                                                    {t('detail.open_in_powershell')}
-                                                </button>
+                                                {#if isMacDesktop}
+                                                    <button type="button" onclick={() => openResumeTerminal('terminal')}>
+                                                        {t('detail.open_in_terminal_app')}
+                                                    </button>
+                                                {:else}
+                                                    <button type="button" onclick={() => openResumeTerminal('cmd')}>
+                                                        {t('detail.open_in_cmd')}
+                                                    </button>
+                                                    <button type="button" onclick={() => openResumeTerminal('powershell')}>
+                                                        {t('detail.open_in_powershell')}
+                                                    </button>
+                                                {/if}
                                             </div>
                                         </div>
                                     {/if}
@@ -2965,6 +3107,14 @@
               >
                   {t('index.indexed_sessions')}
               </button>
+              <button
+                  class="index-tab-btn"
+                  class:active={indexModalTab === 'providers'}
+                  type="button"
+                  onclick={() => void setIndexModalTab('providers')}
+              >
+                  {t('index.provider_paths')}
+              </button>
           </div>
 
           {#if indexModalTab === 'overview'}
@@ -3102,6 +3252,96 @@
                               <span class="index-switch-thumb"></span>
                           </span>
                       </button>
+                  </div>
+              </div>
+          {:else if indexModalTab === 'providers'}
+              <div class="provider-path-section">
+                  <div class="index-library-header">
+                      <div>
+                          <h4>{t('index.provider_paths')}</h4>
+                          <p>{t('index.provider_paths_hint')}</p>
+                      </div>
+                      <span class="view-info">{isWebMode ? t('index.web_server_paths') : t('index.desktop_paths')}</span>
+                  </div>
+
+                  <div class="provider-path-list">
+                      {#if isProviderPathsLoading}
+                          <div class="index-library-empty">{t('index.loading_provider_paths')}</div>
+                      {:else if providerPaths.length === 0}
+                          <div class="index-library-empty">{t('index.no_provider_paths')}</div>
+                      {:else}
+                          {#each providerPaths as provider}
+                              <div class="provider-path-card">
+                                  <div class="provider-path-head">
+                                      <div class="provider-path-title">
+                                          <strong>{providerDisplayName(provider.providerId)}</strong>
+                                      </div>
+                                      <div class="provider-path-badges">
+                                          <span class="provider-path-badge">{providerPathSourceLabel(provider.source)}</span>
+                                          <span
+                                              class="provider-path-badge"
+                                              class:ok={provider.exists && provider.readable}
+                                              class:warn={!provider.exists || !provider.readable}
+                                          >
+                                              {provider.exists && provider.readable ? t('index.path_readable') : t('index.path_unavailable')}
+                                          </span>
+                                      </div>
+                                  </div>
+                                  <div class="provider-path-control-row">
+                                      <input
+                                          class="provider-path-input"
+                                          aria-label={t('index.provider_path')}
+                                          value={providerPathDrafts[provider.providerId] ?? provider.path}
+                                          disabled={provider.source === 'env' || providerPathSaving === provider.providerId}
+                                          oninput={(event) => updateProviderPathDraft(provider.providerId, (event.currentTarget as HTMLInputElement).value)}
+                                      />
+                                      <div class="provider-path-actions">
+                                          <button
+                                              class="index-action-btn"
+                                              type="button"
+                                              onclick={() => copyText(provider.path, keyMessage('toast.provider_path_copied'))}
+                                          >
+                                              {t('actions.copy_path')}
+                                          </button>
+                                          {#if !isWebMode}
+                                              <button
+                                                  class="index-action-btn"
+                                                  type="button"
+                                                  onclick={() => void openProviderPath(provider.path)}
+                                                  disabled={!provider.exists}
+                                              >
+                                                  {fileManagerOpenLabel()}
+                                              </button>
+                                              <button
+                                                  class="index-action-btn"
+                                                  type="button"
+                                                  onclick={() => void chooseProviderDirectory(provider.providerId)}
+                                                  disabled={provider.source === 'env' || providerPathSaving === provider.providerId}
+                                              >
+                                                  {providerPathSaving === provider.providerId ? t('actions.saving') : t('actions.choose_folder')}
+                                              </button>
+                                          {/if}
+                                          <button
+                                              class="index-action-btn"
+                                              type="button"
+                                              onclick={() => void saveProviderPath(provider.providerId)}
+                                              disabled={provider.source === 'env' || providerPathSaving === provider.providerId}
+                                          >
+                                              {providerPathSaving === provider.providerId ? t('actions.saving') : t('actions.save')}
+                                          </button>
+                                          <button
+                                              class="index-action-btn"
+                                              type="button"
+                                              onclick={() => void resetProviderPath(provider.providerId)}
+                                              disabled={provider.source !== 'override' || providerPathSaving === provider.providerId}
+                                          >
+                                              {t('actions.reset')}
+                                          </button>
+                                      </div>
+                                  </div>
+                              </div>
+                          {/each}
+                      {/if}
                   </div>
               </div>
           {:else}
