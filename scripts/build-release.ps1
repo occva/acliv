@@ -108,9 +108,9 @@ function Set-CargoVersion {
   param([string]$FilePath, [string]$NewVersion)
 
   $content = Get-Content $FilePath -Raw
-  $updated = [regex]::Replace($content, '(?m)^version = ".*?"$', "version = `"$NewVersion`"", 1)
+  $updated = [regex]::Replace($content, '(?m)^(\s*version\s*=\s*")[^"]+(")', "`${1}$NewVersion`${2}", 1)
   if ($updated -eq $content) {
-    if ($content -notmatch ('(?m)^version = "' + [regex]::Escape($NewVersion) + '"$')) {
+    if ($content -notmatch ('(?m)^\s*version\s*=\s*"' + [regex]::Escape($NewVersion) + '"')) {
       throw "Failed to update Cargo version in $FilePath"
     }
     return
