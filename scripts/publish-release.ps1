@@ -62,6 +62,9 @@ Invoke-Step -Name 'verify version files' -Action {
   Assert-Version -FilePath 'package.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
   Assert-Version -FilePath 'package-lock.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
   Assert-Version -FilePath 'src-tauri\Cargo.toml' -Pattern '(?m)^version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
+  Assert-Version -FilePath 'src-tauri\Cargo.lock' -Pattern '(?ms)\[\[package\]\]\s+name\s*=\s*"acliv"\s+version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
+  Assert-Version -FilePath 'src-tauri\web\Cargo.toml' -Pattern '(?m)^version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
+  Assert-Version -FilePath 'src-tauri\web\Cargo.lock' -Pattern '(?ms)\[\[package\]\]\s+name\s*=\s*"acliv-web"\s+version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
   Assert-Version -FilePath 'src-tauri\tauri.conf.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
 }
 

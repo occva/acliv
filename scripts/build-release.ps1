@@ -249,6 +249,9 @@ $releaseDir = Join-Path $RepoRoot "release\v$Version"
 $packageJson = Join-Path $RepoRoot 'package.json'
 $packageLock = Join-Path $RepoRoot 'package-lock.json'
 $cargoToml = Join-Path $RepoRoot 'src-tauri\Cargo.toml'
+$cargoLock = Join-Path $RepoRoot 'src-tauri\Cargo.lock'
+$webCargoToml = Join-Path $RepoRoot 'src-tauri\web\Cargo.toml'
+$webCargoLock = Join-Path $RepoRoot 'src-tauri\web\Cargo.lock'
 $tauriConfig = Join-Path $RepoRoot 'src-tauri\tauri.conf.json'
 $desktopTargetExe = Join-Path $RepoRoot 'src-tauri\target\release\acliv.exe'
 
@@ -258,6 +261,9 @@ Invoke-Step -Name 'sync version files' -Action {
     Set-PackageLockVersion -FilePath $packageLock -NewVersion $Version
   }
   Set-CargoVersion -FilePath $cargoToml -NewVersion $Version
+  Set-CargoVersion -FilePath $cargoLock -NewVersion $Version
+  Set-CargoVersion -FilePath $webCargoToml -NewVersion $Version
+  Set-CargoVersion -FilePath $webCargoLock -NewVersion $Version
   Set-JsonVersion -FilePath $tauriConfig -NewVersion $Version
 }
 
