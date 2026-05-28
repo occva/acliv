@@ -1,6 +1,7 @@
 // src-tauri/src/cmd.rs
 #![allow(non_snake_case)]
 
+use crate::paths;
 use crate::search_index;
 use crate::session_manager;
 
@@ -13,6 +14,64 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
         .await
         .map_err(|e| format!("Failed to scan sessions: {e}"))?;
     Ok(sessions)
+}
+
+#[tauri::command]
+pub async fn list_provider_paths() -> Result<Vec<paths::ProviderPathInfo>, String> {
+    tauri::async_runtime::spawn_blocking(paths::list_provider_paths)
+        .await
+        .map_err(|e| format!("Failed to list provider paths: {e}"))
+}
+
+#[tauri::command]
+pub async fn set_provider_path(
+    providerId: String,
+    path: String,
+) -> Result<paths::ProviderPathInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || paths::set_provider_path(&providerId, &path))
+        .await
+        .map_err(|e| format!("Failed to save provider path: {e}"))?
+}
+
+#[tauri::command]
+pub async fn reset_provider_path(providerId: String) -> Result<paths::ProviderPathInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || paths::reset_provider_path(&providerId))
+        .await
+        .map_err(|e| format!("Failed to reset provider path: {e}"))?
+}
+
+#[tauri::command]
+pub async fn pick_provider_directory(
+    app: tauri::AppHandle,
+    providerId: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let info = paths::list_provider_paths()
+        .into_iter()
+        .find(|item| item.provider_id == providerId)
+        .ok_or_else(|| format!("Unsupported provider: {providerId}"))?;
+    let initial = info.path;
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_directory(initial)
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| format!("Failed to open folder picker: {e}"))?;
+
+    match result {
+        Some(file_path) => {
+            let resolved = file_path
+                .simplified()
+                .into_path()
+                .map_err(|e| format!("Failed to resolve selected folder: {e}"))?;
+            Ok(Some(resolved.to_string_lossy().to_string()))
+        }
+        None => Ok(None),
+    }
 }
 
 #[tauri::command]
@@ -238,102 +297,226 @@ pub async fn delete_session(
     .map_err(|e| format!("Failed to delete session: {e}"))?
 }
 
-// ==================== Windows 终端启动 ====================
+// ==================== 系统终端 / 文件管理器 ====================
 
-/// 在 Windows 终端中执行命令（仅 Windows 平台）
-/// 非 Windows 返回 Err，前端降级为复制到剪贴板
+/// 在桌面系统终端中执行恢复命令。
 #[tauri::command]
 pub async fn launch_session_terminal(
     command: String,
     cwd: Option<String>,
     terminalKind: Option<String>,
 ) -> Result<bool, String> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        return Err("Terminal launch is only supported on Windows".to_string());
-    }
-
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
+        return launch_windows_terminal(&command, cwd.as_deref(), terminalKind.as_deref());
+    }
 
-        match terminalKind.as_deref() {
-            Some("powershell") => {
-                let shell_command = build_powershell_prompt_script(&command);
-                let binary = resolve_powershell_binary();
-                let mut process = Command::new(binary);
-                process.args(["-NoExit", "-Command", &shell_command]);
-                apply_current_dir(&mut process, cwd.as_deref());
-                process
-                    .spawn()
-                    .map_err(|e| format!("Failed to launch {binary}: {e}"))?;
-                Ok(true)
-            }
-            Some("cmd") => {
-                let mut process = Command::new("cmd.exe");
-                process.args(["/K", &command]);
-                apply_current_dir(&mut process, cwd.as_deref());
-                process
-                    .spawn()
-                    .map_err(|e| format!("Failed to launch cmd.exe: {e}"))?;
-                Ok(true)
-            }
-            Some(other) => Err(format!("Unsupported terminal kind: {other}")),
-            None => {
-                let mut wt = Command::new("wt.exe");
-                wt.arg("new-tab");
-                if let Some(dir) = cwd.as_deref().filter(|dir| !dir.trim().is_empty()) {
-                    wt.args(["--startingDirectory", dir]);
-                }
-                let wt = wt.args(["cmd.exe", "/K", &command]).spawn();
+    #[cfg(target_os = "macos")]
+    {
+        return launch_macos_terminal(&command, cwd.as_deref(), terminalKind.as_deref());
+    }
 
-                if wt.is_ok() {
-                    return Ok(true);
-                }
-
-                let mut process = Command::new("cmd.exe");
-                process.args(["/K", &command]);
-                apply_current_dir(&mut process, cwd.as_deref());
-                process
-                    .spawn()
-                    .map_err(|e| format!("Failed to launch terminal: {e}"))?;
-
-                Ok(true)
-            }
-        }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (command, cwd, terminalKind);
+        Err("Terminal launch is only supported on Windows and macOS".to_string())
     }
 }
 
 #[tauri::command]
 pub async fn open_in_file_explorer(path: String) -> Result<bool, String> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        return Err("File Explorer integration is only supported on Windows".to_string());
-    }
-
     #[cfg(target_os = "windows")]
     {
-        use std::path::Path;
-        use std::process::Command;
-
-        let target = Path::new(&path);
-        if !target.exists() {
-            return Err(format!("Path not found: {path}"));
-        }
-
-        let mut command = Command::new("explorer.exe");
-        if target.is_file() {
-            command.arg(format!("/select,{}", target.display()));
-        } else {
-            command.arg(target);
-        }
-
-        command
-            .spawn()
-            .map_err(|e| format!("Failed to open File Explorer: {e}"))?;
-
-        Ok(true)
+        return open_windows_file_explorer(&path);
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        return open_macos_finder(&path);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = path;
+        Err("File manager integration is only supported on Windows and macOS".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_terminal(
+    command: &str,
+    cwd: Option<&str>,
+    terminal_kind: Option<&str>,
+) -> Result<bool, String> {
+    use std::process::Command;
+
+    match terminal_kind {
+        Some("powershell") => {
+            let shell_command = build_powershell_prompt_script(command);
+            let binary = resolve_powershell_binary();
+            let mut process = Command::new(binary);
+            process.args(["-NoExit", "-Command", &shell_command]);
+            apply_current_dir(&mut process, cwd);
+            process
+                .spawn()
+                .map_err(|e| format!("Failed to launch {binary}: {e}"))?;
+            Ok(true)
+        }
+        Some("cmd") => {
+            let mut process = Command::new("cmd.exe");
+            process.args(["/K", command]);
+            apply_current_dir(&mut process, cwd);
+            process
+                .spawn()
+                .map_err(|e| format!("Failed to launch cmd.exe: {e}"))?;
+            Ok(true)
+        }
+        Some(other) => Err(format!("Unsupported terminal kind: {other}")),
+        None => {
+            let mut wt = Command::new("wt.exe");
+            wt.arg("new-tab");
+            if let Some(dir) = cwd.filter(|dir| !dir.trim().is_empty()) {
+                wt.args(["--startingDirectory", dir]);
+            }
+            let wt = wt.args(["cmd.exe", "/K", command]).spawn();
+
+            if wt.is_ok() {
+                return Ok(true);
+            }
+
+            let mut process = Command::new("cmd.exe");
+            process.args(["/K", command]);
+            apply_current_dir(&mut process, cwd);
+            process
+                .spawn()
+                .map_err(|e| format!("Failed to launch terminal: {e}"))?;
+
+            Ok(true)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn open_windows_file_explorer(path: &str) -> Result<bool, String> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let target = Path::new(path);
+    if !target.exists() {
+        return Err(format!("Path not found: {path}"));
+    }
+
+    let mut command = Command::new("explorer.exe");
+    if target.is_file() {
+        command.arg(format!("/select,{}", target.display()));
+    } else {
+        command.arg(target);
+    }
+
+    command
+        .spawn()
+        .map_err(|e| format!("Failed to open File Explorer: {e}"))?;
+
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_terminal(
+    command: &str,
+    cwd: Option<&str>,
+    terminal_kind: Option<&str>,
+) -> Result<bool, String> {
+    use std::process::Command;
+
+    match terminal_kind {
+        None | Some("terminal") => {}
+        Some(other) => return Err(format!("Unsupported terminal kind on macOS: {other}")),
+    }
+
+    let shell_command = build_macos_terminal_command(command, cwd)?;
+    let do_script = format!("do script {}", quote_applescript_string(&shell_command));
+
+    Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"Terminal\"",
+            "-e",
+            "activate",
+            "-e",
+            &do_script,
+            "-e",
+            "end tell",
+        ])
+        .spawn()
+        .map_err(|e| format!("Failed to launch Terminal: {e}"))?;
+
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_finder(path: &str) -> Result<bool, String> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let target = Path::new(path);
+    if !target.exists() {
+        return Err(format!("Path not found: {path}"));
+    }
+
+    let mut command = Command::new("open");
+    if target.is_file() {
+        command.args(["-R", path]);
+    } else {
+        command.arg(path);
+    }
+
+    command
+        .spawn()
+        .map_err(|e| format!("Failed to open Finder: {e}"))?;
+
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_terminal_command(command: &str, cwd: Option<&str>) -> Result<String, String> {
+    use std::path::Path;
+
+    let trimmed_command = command.trim();
+    if trimmed_command.is_empty() {
+        return Err("Command is required".to_string());
+    }
+
+    if let Some(dir) = cwd.filter(|dir| !dir.trim().is_empty()) {
+        let target = Path::new(dir);
+        if !target.exists() {
+            return Err(format!("Working directory not found: {dir}"));
+        }
+        if !target.is_dir() {
+            return Err(format!("Working directory is not a directory: {dir}"));
+        }
+
+        Ok(format!(
+            "cd -- {} && {}",
+            shell_single_quote(dir),
+            trimmed_command
+        ))
+    } else {
+        Ok(trimmed_command.to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(target_os = "macos")]
+fn quote_applescript_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace(['\r', '\n'], " ");
+    format!("\"{escaped}\"")
 }
 
 #[cfg(target_os = "windows")]

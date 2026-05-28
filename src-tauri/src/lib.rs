@@ -37,8 +37,13 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_sessions,
+            list_provider_paths,
+            set_provider_path,
+            reset_provider_path,
+            pick_provider_directory,
             rebuild_search_index,
             refresh_search_index,
             get_search_index_status,

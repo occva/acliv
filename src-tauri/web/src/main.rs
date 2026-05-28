@@ -157,6 +157,13 @@ struct DeleteSessionRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProviderPathRequest {
+    provider_id: String,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SearchContentRequest {
     query: String,
     provider_id: Option<String>,
@@ -283,6 +290,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protected_routes = Router::new()
         .route("/auth/verify", get(verify_auth))
         .route("/sessions", get(list_sessions))
+        .route("/provider/paths", get(list_provider_paths))
+        .route("/provider/path", post(set_provider_path))
+        .route("/provider/path/reset", post(reset_provider_path))
         .route("/search/index/status", get(get_search_index_status))
         .route("/search/index/rebuild", post(rebuild_search_index))
         .route("/search/index/refresh", post(refresh_search_index))
@@ -437,10 +447,8 @@ async fn login_auth(
     let username = payload.username.trim();
     let password = payload.password.trim();
     if username != state.auth_username || password != state.auth_password {
-        return Err(
-            AppError::unauthorized("Invalid username or password")
-                .with_code("auth.invalid_credentials"),
-        );
+        return Err(AppError::unauthorized("Invalid username or password")
+            .with_code("auth.invalid_credentials"));
     }
 
     Ok(Json(ApiResult {
@@ -511,6 +519,53 @@ async fn list_sessions() -> Result<Json<ApiResult<Vec<session_manager::SessionMe
     Ok(Json(ApiResult {
         ok: true,
         data: sessions,
+    }))
+}
+
+async fn list_provider_paths() -> Result<Json<ApiResult<Vec<paths::ProviderPathInfo>>>, AppError> {
+    let paths = spawn_blocking(paths::list_provider_paths)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list provider paths: {e}")))?;
+
+    Ok(Json(ApiResult {
+        ok: true,
+        data: paths,
+    }))
+}
+
+async fn set_provider_path(
+    Json(payload): Json<ProviderPathRequest>,
+) -> Result<Json<ApiResult<paths::ProviderPathInfo>>, AppError> {
+    validate_non_empty("providerId", &payload.provider_id)?;
+    let path = payload.path.unwrap_or_default();
+    validate_non_empty("path", &path)?;
+
+    let provider_id = payload.provider_id.trim().to_string();
+    let info = spawn_blocking(move || paths::set_provider_path(&provider_id, &path))
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to save provider path: {e}")))?
+        .map_err(map_domain_error)?;
+
+    Ok(Json(ApiResult {
+        ok: true,
+        data: info,
+    }))
+}
+
+async fn reset_provider_path(
+    Json(payload): Json<ProviderPathRequest>,
+) -> Result<Json<ApiResult<paths::ProviderPathInfo>>, AppError> {
+    validate_non_empty("providerId", &payload.provider_id)?;
+
+    let provider_id = payload.provider_id.trim().to_string();
+    let info = spawn_blocking(move || paths::reset_provider_path(&provider_id))
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to reset provider path: {e}")))?
+        .map_err(map_domain_error)?;
+
+    Ok(Json(ApiResult {
+        ok: true,
+        data: info,
     }))
 }
 
