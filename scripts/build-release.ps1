@@ -118,6 +118,26 @@ function Set-CargoVersion {
   Write-Utf8NoBom -FilePath $FilePath -Content $updated
 }
 
+function Set-CargoLockPackageVersion {
+  param(
+    [string]$FilePath,
+    [string]$PackageName,
+    [string]$NewVersion
+  )
+
+  $content = Get-Content $FilePath -Raw
+  $escapedPackageName = [regex]::Escape($PackageName)
+  $pattern = "(?ms)(\[\[package\]\]\s+name\s*=\s*`"$escapedPackageName`"\s+version\s*=\s*`")[^`"]+(`")"
+  $updated = [regex]::Replace($content, $pattern, "`${1}$NewVersion`${2}", 1)
+  if ($updated -eq $content) {
+    if ($content -notmatch "(?ms)\[\[package\]\]\s+name\s*=\s*`"$escapedPackageName`"\s+version\s*=\s*`"$([regex]::Escape($NewVersion))`"") {
+      throw "Failed to update Cargo lock package version in $FilePath for $PackageName"
+    }
+    return
+  }
+  Write-Utf8NoBom -FilePath $FilePath -Content $updated
+}
+
 function Stop-RepoProcess {
   param(
     [string]$ExecutablePath
@@ -261,9 +281,9 @@ Invoke-Step -Name 'sync version files' -Action {
     Set-PackageLockVersion -FilePath $packageLock -NewVersion $Version
   }
   Set-CargoVersion -FilePath $cargoToml -NewVersion $Version
-  Set-CargoVersion -FilePath $cargoLock -NewVersion $Version
+  Set-CargoLockPackageVersion -FilePath $cargoLock -PackageName 'acliv' -NewVersion $Version
   Set-CargoVersion -FilePath $webCargoToml -NewVersion $Version
-  Set-CargoVersion -FilePath $webCargoLock -NewVersion $Version
+  Set-CargoLockPackageVersion -FilePath $webCargoLock -PackageName 'acliv-web' -NewVersion $Version
   Set-JsonVersion -FilePath $tauriConfig -NewVersion $Version
 }
 
