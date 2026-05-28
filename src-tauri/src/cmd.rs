@@ -198,6 +198,7 @@ pub async fn get_indexed_session_messages(
     })
     .await
     .map_err(|e| format!("Failed to load indexed session messages: {e}"))?
+    .map_err(|e| format!("Failed to load indexed session messages: {e}"))
 }
 
 /// 获取指定会话的消息详情

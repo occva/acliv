@@ -80,6 +80,14 @@ impl AppError {
         }
     }
 
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+            code: Some("request.not_found"),
+        }
+    }
+
     fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -722,7 +730,7 @@ async fn get_indexed_session_messages(
     })
     .await
     .map_err(|e| AppError::internal(format!("Failed to load indexed session messages: {e}")))?
-    .map_err(AppError::internal)?;
+    .map_err(map_search_index_error)?;
 
     Ok(Json(ApiResult {
         ok: true,
@@ -792,5 +800,12 @@ fn map_domain_error(message: String) -> AppError {
         AppError::forbidden(message).with_code("request.path_outside_provider_root")
     } else {
         AppError::bad_request(message)
+    }
+}
+
+fn map_search_index_error(error: search_index::SearchIndexError) -> AppError {
+    match error {
+        search_index::SearchIndexError::NotFound(message) => AppError::not_found(message),
+        search_index::SearchIndexError::Internal(message) => AppError::internal(message),
     }
 }

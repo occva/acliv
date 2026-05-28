@@ -1,4 +1,5 @@
 mod db;
+mod error;
 mod indexer;
 mod query;
 mod schema;
@@ -22,6 +23,7 @@ pub(crate) struct SyncProgress {
     pub total: i64,
 }
 
+pub use error::SearchIndexError;
 pub use types::{
     IndexedMessage, IndexedProjectOption, IndexedSession, PagedIndexedSessionsResult,
     RebuildSearchIndexResult, RefreshSearchIndexResult, SearchContentResult, SearchIndexStatus,
@@ -34,8 +36,7 @@ pub fn rebuild_index() -> Result<RebuildSearchIndexResult, String> {
 }
 
 pub fn get_index_status() -> Result<SearchIndexStatus, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+    let connection = db::open_readonly_connection()?;
     status::get_status(&connection)
 }
 
@@ -61,8 +62,7 @@ pub fn list_indexed_sessions(
     limit: usize,
     provider_id: Option<&str>,
 ) -> Result<Vec<IndexedSession>, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+    let connection = db::open_readonly_connection()?;
     query::list_sessions(&connection, limit, provider_id)
 }
 
@@ -72,16 +72,14 @@ pub fn list_indexed_sessions_page(
     provider_id: Option<&str>,
     project_path: Option<&str>,
 ) -> Result<PagedIndexedSessionsResult, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+    let connection = db::open_readonly_connection()?;
     query::list_sessions_page(&connection, limit, offset, provider_id, project_path)
 }
 
 pub fn list_indexed_projects(
     provider_id: Option<&str>,
 ) -> Result<Vec<IndexedProjectOption>, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+    let connection = db::open_readonly_connection()?;
     query::list_projects(&connection, provider_id)
 }
 
@@ -89,17 +87,16 @@ pub fn list_indexed_sessions_by_source_paths(
     provider_id: &str,
     source_paths: &[String],
 ) -> Result<Vec<IndexedSession>, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+    let connection = db::open_readonly_connection()?;
     query::list_sessions_by_source_paths(&connection, provider_id, source_paths)
 }
 
 pub fn get_indexed_session_messages(
     provider_id: &str,
     source_path: &str,
-) -> Result<Vec<IndexedMessage>, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+) -> Result<Vec<IndexedMessage>, SearchIndexError> {
+    let connection = db::open_readonly_connection()
+        .map_err(|e| SearchIndexError::internal(format!("Failed to open search DB: {e}")))?;
     query::get_session_messages(&connection, provider_id, source_path)
 }
 
@@ -111,8 +108,7 @@ pub fn search_content(
     project_path: Option<&str>,
     sort_by: Option<&str>,
 ) -> Result<SearchContentResult, String> {
-    let connection = db::open_connection()?;
-    schema::run_migrations(&connection)?;
+    let connection = db::open_readonly_connection()?;
     query::search_content(
         &connection,
         query,
@@ -401,6 +397,25 @@ mod tests {
         .expect("search codex tool payload");
         assert_eq!(search.total_count, 0);
         assert!(search.hits.is_empty());
+    }
+
+    #[test]
+    fn missing_indexed_session_returns_not_found_error() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fixture = SearchFixture::new();
+
+        rebuild_index().expect("rebuild");
+        let err = get_indexed_session_messages(
+            "claude",
+            &PathBuf::from(&fixture.claude_project_path)
+                .join("missing-session.jsonl")
+                .to_string_lossy(),
+        )
+        .expect_err("missing indexed session should return a typed error");
+
+        assert!(matches!(err, SearchIndexError::NotFound(_)));
     }
 
     fn env_lock() -> &'static Mutex<()> {

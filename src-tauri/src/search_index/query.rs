@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
+use super::error::SearchIndexError;
 use super::tokenizer;
 use super::types::{
     IndexedMessage, IndexedProjectOption, IndexedSession, PagedIndexedSessionsResult,
@@ -321,7 +322,7 @@ pub fn get_session_messages(
     connection: &Connection,
     provider_id: &str,
     source_path: &str,
-) -> Result<Vec<IndexedMessage>, String> {
+) -> Result<Vec<IndexedMessage>, SearchIndexError> {
     let session_id = connection
         .query_row(
             r#"
@@ -334,8 +335,12 @@ pub fn get_session_messages(
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|e| format!("Failed to look up indexed session: {e}"))?
-        .ok_or_else(|| format!("Indexed session not found for {provider_id}:{source_path}"))?;
+        .map_err(|e| SearchIndexError::internal(format!("Failed to look up indexed session: {e}")))?
+        .ok_or_else(|| {
+            SearchIndexError::not_found(format!(
+                "Indexed session not found for {provider_id}:{source_path}"
+            ))
+        })?;
 
     let mut stmt = connection
         .prepare(
@@ -358,7 +363,9 @@ pub fn get_session_messages(
             ORDER BY seq
             "#,
         )
-        .map_err(|e| format!("Failed to prepare indexed message query: {e}"))?;
+        .map_err(|e| {
+            SearchIndexError::internal(format!("Failed to prepare indexed message query: {e}"))
+        })?;
     let rows = stmt
         .query_map([session_id], |row| {
             Ok(IndexedMessage {
@@ -376,10 +383,12 @@ pub fn get_session_messages(
                 seq: row.get(10)?,
             })
         })
-        .map_err(|e| format!("Failed to execute indexed message query: {e}"))?;
+        .map_err(|e| {
+            SearchIndexError::internal(format!("Failed to execute indexed message query: {e}"))
+        })?;
 
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to read indexed messages: {e}"))
+        .map_err(|e| SearchIndexError::internal(format!("Failed to read indexed messages: {e}")))
 }
 
 pub fn search_content(
