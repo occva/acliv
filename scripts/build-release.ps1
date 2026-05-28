@@ -139,10 +139,32 @@ function Ensure-NsisOnPath {
     return
   }
 
-  $candidateBins = @(
-    (Join-Path $env:LOCALAPPDATA 'NSIS'),
-    (Join-Path $env:LOCALAPPDATA 'tauri\NSIS'),
-    (Join-Path $env:LOCALAPPDATA 'tauri\NSIS\Bin')
+  $candidateBins = @()
+  if ($env:LOCALAPPDATA) {
+    $candidateBins += @(
+      (Join-Path $env:LOCALAPPDATA 'NSIS'),
+      (Join-Path $env:LOCALAPPDATA 'tauri\NSIS'),
+      (Join-Path $env:LOCALAPPDATA 'tauri\NSIS\Bin')
+    )
+  }
+  if ($env:ProgramFiles) {
+    $candidateBins += (Join-Path $env:ProgramFiles 'NSIS')
+  }
+  $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+  if ($programFilesX86) {
+    $candidateBins += (Join-Path $programFilesX86 'NSIS')
+  }
+  if ($env:ChocolateyInstall) {
+    $candidateBins += @(
+      (Join-Path $env:ChocolateyInstall 'bin'),
+      (Join-Path $env:ChocolateyInstall 'lib\nsis\tools')
+    )
+  }
+  $candidateBins += @(
+    'C:\Program Files\NSIS',
+    'C:\Program Files (x86)\NSIS',
+    'C:\ProgramData\chocolatey\bin',
+    'C:\ProgramData\chocolatey\lib\nsis\tools'
   )
 
   foreach ($candidateBin in $candidateBins) {
