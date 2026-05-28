@@ -873,6 +873,23 @@ body {
     overflow: hidden;
 }
 
+html[data-runtime="desktop"][data-platform="macos"] {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+html[data-runtime="desktop"][data-platform="macos"] body {
+    font-size: 13px;
+}
+
+html[data-runtime="desktop"][data-platform="macos"] .message-content {
+    font-size: 14px;
+}
+
+html[data-runtime="desktop"][data-platform="macos"] .conversation-header h3 {
+    font-size: 22px;
+}
+
 .auth-shell {
     position: relative;
     min-height: 100vh;
