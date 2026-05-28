@@ -176,6 +176,7 @@ const ERROR_KEY_BY_CODE: Record<string, TranslationKey> = {
     'auth.missing_token': 'errors.auth.missing_token',
     'auth.session_expired': 'errors.auth.session_expired',
     'request.bad_request': 'errors.request.bad_request',
+    'request.not_found': 'errors.request.not_found',
     'request.path_outside_provider_root': 'errors.request.path_outside_provider_root',
     'request.internal_error': 'errors.request.internal_error',
     'feature.web_only': 'errors.feature.web_only',

@@ -313,9 +313,12 @@
   }
 
   // --- State (Svelte 5 Runes) ---
-    let allSessions = $state<SessionMeta[]>([]);
+  let allSessions = $state<SessionMeta[]>([]);
   let messageCountCache = $state<Record<string, number>>({});
   let countJobToken = 0;
+  let countWarmupTimer: ReturnType<typeof setTimeout> | null = null;
+  let searchIndexBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+  const messageLoadPromises = new Map<string, Promise<ConversationMessage[]>>();
   let projects = $state<ProjectInfo[]>([]);
   let currentProject = $state<string | null>(null);
   let conversations = $state<ConvSummary[]>([]);
@@ -452,7 +455,7 @@
   async function bootstrapAuthenticatedApp() {
     await loadData();
     await syncConversationFromRoute();
-    void bootstrapSearchIndex();
+    scheduleSearchIndexBootstrap();
   }
 
   function loadMarkdownRenderer(): Promise<MarkdownComponentType | null> {
@@ -670,6 +673,14 @@
     void syncConversationFromRoute();
   }
 
+  function scheduleSearchIndexBootstrap(delayMs = isWebMode ? 8000 : 1500) {
+    if (searchIndexBootstrapTimer) clearTimeout(searchIndexBootstrapTimer);
+    searchIndexBootstrapTimer = setTimeout(() => {
+      searchIndexBootstrapTimer = null;
+      void bootstrapSearchIndex();
+    }, delayMs);
+  }
+
   async function subscribeSearchIndexEvents() {
     if (isWebMode) return;
 
@@ -737,8 +748,10 @@
     try {
       searchIndexStatus = await api.getSearchIndexStatus();
       searchIndexReady = searchIndexStatus.ready && searchIndexStatus.sessionsCount > 0;
+      return searchIndexReady;
     } catch (e) {
       console.error('Failed to refresh search index status:', e);
+      return false;
     }
   }
 
@@ -871,7 +884,7 @@
         if (isIndexModalOpen && indexModalTab === 'sessions') {
           await refreshIndexLibrary(false, true);
         }
-        if (currentProject) void warmupMessageCounts(currentProject);
+        if (currentProject) scheduleMessageCountWarmup(currentProject);
 
       toastType = 'success';
       toastMessage = kind === 'refresh' ? keyMessage('toast.index_refreshed') : keyMessage('toast.index_rebuilt');
@@ -929,6 +942,15 @@
       unlisten();
     }
     searchIndexEventUnsubscribers = [];
+    messageLoadPromises.clear();
+    if (countWarmupTimer) {
+      clearTimeout(countWarmupTimer);
+      countWarmupTimer = null;
+    }
+    if (searchIndexBootstrapTimer) {
+      clearTimeout(searchIndexBootstrapTimer);
+      searchIndexBootstrapTimer = null;
+    }
     window.removeEventListener('keydown', handleGlobalKeydown);
     window.removeEventListener('click', handleWindowClick);
     if (isWebMode) {
@@ -979,7 +1001,7 @@
         if (isIndexModalOpen && indexModalTab === 'sessions') {
           await refreshIndexLibrary(false, true);
         }
-        if (currentProject) void warmupMessageCounts(currentProject);
+        if (currentProject) scheduleMessageCountWarmup(currentProject);
     } catch (e) {
       console.error('Failed to reload sessions after watcher refresh:', e);
     } finally {
@@ -1067,9 +1089,14 @@
   async function loadSessionInventory(preferIndexed = searchIndexReady): Promise<SessionMeta[]> {
     if (preferIndexed) {
       try {
-        return await loadIndexedSessions();
+        const sessions = await loadIndexedSessions();
+        searchIndexReady = sessions.length > 0;
+        return sessions;
       } catch (e) {
-        console.error('Indexed session list failed, falling back to source scan:', e);
+        console.error('Indexed session list failed:', e);
+        if (isWebMode) {
+          throw e;
+        }
         searchIndexReady = false;
       }
     }
@@ -1091,15 +1118,26 @@
     }
   }
 
+  function scheduleMessageCountWarmup(projectName: string, delayMs = isWebMode ? 3000 : 800) {
+    countJobToken++;
+    if (countWarmupTimer) clearTimeout(countWarmupTimer);
+    countWarmupTimer = setTimeout(() => {
+      countWarmupTimer = null;
+      void warmupMessageCounts(projectName);
+    }, delayMs);
+  }
+
   async function warmupMessageCounts(projectName: string) {
+    if (isWebMode) return;
+    if (searchIndexReady) return;
     const token = ++countJobToken;
     const targets = allSessions
       .filter(s => s.providerId === currentSource && sessionDir(s) === projectName && !!s.sourcePath)
       .filter(s => messageCountCache[sessionCacheKey(s)] === undefined);
     if (!targets.length) return;
 
-    const LIMIT = 40;
-    const BATCH_SIZE = 6;
+    const LIMIT = isWebMode ? 8 : 20;
+    const BATCH_SIZE = isWebMode ? 1 : 2;
     const subset = targets.slice(0, LIMIT);
     for (let i = 0; i < subset.length; i += BATCH_SIZE) {
       if (token !== countJobToken) return;
@@ -1125,8 +1163,14 @@
   async function loadData() {
     isLoading = true;
     try {
-        await refreshSearchIndexStatus();
-        const sessions = await loadSessionInventory(searchIndexReady);
+        let sessions: SessionMeta[];
+        if (isWebMode) {
+            sessions = await loadSessionInventory(true);
+            void refreshSearchIndexStatus();
+        } else {
+            await refreshSearchIndexStatus();
+            sessions = await loadSessionInventory(searchIndexReady);
+        }
         applyLoadedSessions(sessions);
     } catch (e) {
       if (handleWebUnauthorized(e)) {
@@ -1159,7 +1203,7 @@
           await refreshSearchIndexStatus();
           const sessions = await loadSessionInventory(searchIndexReady);
           applyLoadedSessions(sessions);
-          if (currentProject) void warmupMessageCounts(currentProject);
+          if (currentProject) scheduleMessageCountWarmup(currentProject);
           showToast = false;
           isRefreshing = false;
       } catch(e) { 
@@ -1216,7 +1260,7 @@
           );
           currentProject = projectStillExists ? deletedProject : null;
           conversations = currentProject ? buildConversations(sessions, currentSource, currentProject) : [];
-          if (currentProject) void warmupMessageCounts(currentProject);
+          if (currentProject) scheduleMessageCountWarmup(currentProject);
 
           toastType = 'success';
           toastMessage = keyMessage('toast.session_deleted');
@@ -1245,7 +1289,7 @@
       currentView = 'list';
       activeSearchMatch = null;
     }
-    void warmupMessageCounts(name);
+    scheduleMessageCountWarmup(name);
   }
 
   function showFeedback(message: string | UiMessage, type: 'success' | 'error' | 'syncing' = 'success') {
@@ -1717,26 +1761,22 @@
       }));
   }
 
-  async function loadConversationMessages(target: SessionMeta): Promise<ConversationMessage[]> {
-      if (!target.sourcePath) return [];
-
-      if (searchIndexReady) {
-          try {
-              return await loadIndexedConversationMessages(target);
-          } catch (e) {
-              console.error('Indexed message read failed, retrying indexed session refresh:', e);
-              try {
-                  await refreshChangedSessions([{
-                      providerId: target.providerId,
-                      sourcePath: target.sourcePath,
-                  }]);
-                  return await loadIndexedConversationMessages(target);
-              } catch (retryError) {
-                  console.error('Indexed message retry failed, falling back to source file:', retryError);
-              }
-          }
+  function isRecoverableIndexedMessageError(error: unknown): boolean {
+      const code = api.getErrorCode(error);
+      if (code === 'request.not_found' || code === 'request.bad_request') {
+          return true;
       }
 
+      const message = typeof error === 'string'
+          ? error
+          : error instanceof Error
+            ? error.message
+            : '';
+      return message.includes('Indexed session not found');
+  }
+
+  async function loadRawConversationMessages(target: SessionMeta): Promise<ConversationMessage[]> {
+      if (!target.sourcePath) return [];
       const raw = await api.getSessionMessages(target.providerId, target.sourcePath);
       return raw.map((msg, index) => ({
           role: msg.role,
@@ -1747,6 +1787,39 @@
           ts: msg.ts,
           seq: index,
       }));
+  }
+
+  async function loadConversationMessages(target: SessionMeta): Promise<ConversationMessage[]> {
+      if (!target.sourcePath) return [];
+
+      const cacheKey = sessionCacheKey(target);
+      const existing = messageLoadPromises.get(cacheKey);
+      if (existing) return existing;
+
+      const promise = loadConversationMessagesOnce(target);
+      messageLoadPromises.set(cacheKey, promise);
+      try {
+          return await promise;
+      } finally {
+          if (messageLoadPromises.get(cacheKey) === promise) {
+              messageLoadPromises.delete(cacheKey);
+          }
+      }
+  }
+
+  async function loadConversationMessagesOnce(target: SessionMeta): Promise<ConversationMessage[]> {
+      if (searchIndexReady) {
+          try {
+              return await loadIndexedConversationMessages(target);
+          } catch (e) {
+              const recoverable = isRecoverableIndexedMessageError(e);
+              if (!recoverable) {
+                  console.error('Indexed message read failed, falling back to source file:', e);
+              }
+          }
+      }
+
+      return loadRawConversationMessages(target);
   }
 
   async function selectConversation(
@@ -1968,6 +2041,7 @@
   }
 
   async function bootstrapSearchIndex() {
+      if (isWebMode) return;
       if (searchIndexBootstrapping) return;
       searchIndexBootstrapping = true;
       try {

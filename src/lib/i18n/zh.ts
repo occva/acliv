@@ -144,6 +144,7 @@ const zh: Record<TranslationKey, string> = {
     'errors.auth.missing_token': '需要先登录',
     'errors.auth.session_expired': '登录已失效，请重新登录',
     'errors.request.bad_request': '请求参数无效',
+    'errors.request.not_found': '请求的数据不存在',
     'errors.request.path_outside_provider_root': '路径超出来源根目录',
     'errors.request.internal_error': '内部错误',
     'errors.feature.web_only': 'Web 模式不支持此操作',

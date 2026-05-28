@@ -142,6 +142,7 @@ export const en = {
     'errors.auth.missing_token': 'Login required',
     'errors.auth.session_expired': 'Session expired. Please sign in again.',
     'errors.request.bad_request': 'Request is invalid',
+    'errors.request.not_found': 'Requested data was not found',
     'errors.request.path_outside_provider_root': 'Path is outside the provider root',
     'errors.request.internal_error': 'Internal error',
     'errors.feature.web_only': 'Not supported in web mode',
