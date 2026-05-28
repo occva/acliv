@@ -1,6 +1,6 @@
 [package]
 name = "acliv-web"
-version = "1.0.10"
+version = "1.0.11"
 description = "ACLIV - Web Server"
 authors = ["Your Name"]
 license = "MIT"
