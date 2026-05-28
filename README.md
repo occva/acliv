@@ -27,7 +27,7 @@
 
 - `list_sessions`：扫描全部 provider，返回标准化 `SessionMeta[]`
 - `get_session_messages`：按 `providerId + sourcePath` 加载消息
-- `launch_session_terminal`：Windows 下启动终端执行恢复命令
+- `launch_session_terminal`：Windows/macOS 下启动终端执行恢复命令
 - `acliv-web`：独立 Web 入口（`/api/*`），复用同一套 `session_manager`
 
 
