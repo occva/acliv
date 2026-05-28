@@ -3,8 +3,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$Version,
   [switch]$AllowDirty,
-  [ValidateSet('template', 'git')]
-  [string]$ReleaseNotesMode = 'template'
+  [string]$ReleaseNotesPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -196,114 +195,12 @@ function Ensure-NsisOnPath {
   }
 }
 
-function Get-ReleaseNotesChangesTemplate {
-  return @(
-    '- TODO: Summarize the major user-facing changes in this release.',
-    '- TODO: List the most important fixes or behavior changes.',
-    '- TODO: Mention deployment or packaging changes if they matter to users.'
-  )
-}
-
-function Decode-ReleaseNoteText {
-  param([string]$Base64)
-
-  return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64))
-}
-
-function Get-GitReleaseSubjects {
-  $currentTag = "v$Version"
-  $tags = @(
-    git tag --sort=-creatordate --list 'v*' |
-      ForEach-Object { $_.Trim() } |
-      Where-Object { $_ }
-  )
-  if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to inspect release tags for release notes.'
+function Resolve-ReleaseNotesSource {
+  if ($ReleaseNotesPath) {
+    return $ReleaseNotesPath
   }
 
-  $previousTag = $tags | Where-Object { $_ -ne $currentTag } | Select-Object -First 1
-  if ($previousTag) {
-    $rawSubjects = git log "$previousTag..HEAD" --pretty=format:%s
-  } else {
-    $rawSubjects = git log --pretty=format:%s -n 20
-  }
-  if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to read git history for release notes.'
-  }
-
-  return @(
-    $rawSubjects -split "`r?`n" |
-      ForEach-Object { $_.Trim() } |
-      Where-Object { $_ -and ($_ -notmatch '^Merge\b') }
-  )
-}
-
-function Get-GitReleaseNotesChanges {
-  $subjects = @(Get-GitReleaseSubjects)
-  if ($subjects.Count -eq 0) {
-    return @(
-      (Decode-ReleaseNoteText '5pu05paw5YaF5a65Og=='),
-      '',
-      (Decode-ReleaseNoteText 'LSDljIXlkKvov5HmnJ/nqLPlrprmgKfkv67lpI3lkozlj5HluIPlh4blpIfmm7TmlrDjgII='),
-      '',
-      'Updates:',
-      '',
-      '- Includes recent stability fixes and release preparation updates.'
-    )
-  }
-
-  $hasLoading = [bool]($subjects -match '(search|message|performance|500|retry)')
-  $hasDesktop = [bool]($subjects -match '(desktop|macOS|font)')
-  $hasRelease = [bool]($subjects -match '(release|NSIS|Cargo lock|Docker|ci|build)')
-
-  $zh = @()
-  $en = @()
-
-  if ($hasLoading) {
-    $zh += Decode-ReleaseNoteText '5LyY5YyW5raI5oGv5Yqg6L295ZKM5pCc57Si57Si5byV6ZSZ6K+v5aSE55CG77yM5YeP5bCR5ZCv5Yqo5Y2h6aG/44CBNTAwIOmUmeivr+WSjOmHjeWkjemHjeivleOAgg=='
-    $en += 'Improved message loading and indexed search error handling to reduce startup stalls, 500 errors, and retries.'
-  }
-  if ($hasDesktop) {
-    $zh += Decode-ReleaseNoteText '5L+u5aSN5qGM6Z2i56uv5pi+56S65L2T6aqM6Zeu6aKY77yM5YyF5ousIG1hY09TIOWtl+S9k+Wkp+Wwj+S4gOiHtOaAp+OAgg=='
-    $en += 'Fixed desktop display polish, including consistent macOS font sizing.'
-  }
-  if ($hasRelease) {
-    $zh += Decode-ReleaseNoteText '5a6M5ZaE5Y+R5biD5ZKM5omT5YyF5rWB56iL77yM5o+Q6auYIFdpbmRvd3PjgIFtYWNPUyDlkowgRG9ja2VyIOS6p+eJqeWPkeW4g+WPr+mdoOaAp+OAgg=='
-    $en += 'Hardened release and packaging automation for more reliable Windows, macOS, and Docker outputs.'
-  }
-  if ($zh.Count -eq 0) {
-    $zh += Decode-ReleaseNoteText '5YyF5ZCr6L+R5pyf56iz5a6a5oCn5L+u5aSN5ZKM5L2/55So5L2T6aqM5pS56L+b44CC'
-    $en += 'Includes recent stability fixes and usability improvements.'
-  }
-
-  return @(
-    (Decode-ReleaseNoteText '5pu05paw5YaF5a65Og=='),
-    ''
-  ) + ($zh | ForEach-Object { "- $_" }) + @(
-    '',
-    'Updates:',
-    ''
-  ) + ($en | ForEach-Object { "- $_" })
-}
-
-function Get-ReleaseNotesChanges {
-  param(
-    [ValidateSet('template', 'git')]
-    [string]$Mode
-  )
-
-  if ($Mode -eq 'git') {
-    return Get-GitReleaseNotesChanges
-  }
-
-  return Get-ReleaseNotesChangesTemplate
-}
-
-function Get-ReleaseNotesVerification {
-  return @(
-    '- Ran `npm run tauri build`',
-    '- Collected standard release artifacts into the `release/` directory'
-  )
+  return Join-Path $RepoRoot "docs\releases\v$Version.md"
 }
 
 function Find-SingleFile {
@@ -338,6 +235,7 @@ $webCargoToml = Join-Path $RepoRoot 'src-tauri\web\Cargo.toml'
 $webCargoLock = Join-Path $RepoRoot 'src-tauri\web\Cargo.lock'
 $tauriConfig = Join-Path $RepoRoot 'src-tauri\tauri.conf.json'
 $desktopTargetExe = Join-Path $RepoRoot 'src-tauri\target\release\acliv.exe'
+$releaseNotesSource = Resolve-ReleaseNotesSource
 
 Invoke-Step -Name 'sync version files' -Action {
   Set-JsonVersion -FilePath $packageJson -NewVersion $Version
@@ -378,21 +276,11 @@ Invoke-Step -Name 'collect release artifacts' -Action {
 }
 
 $releaseNotesPath = Join-Path $releaseDir "release-notes-v$Version.md"
-Invoke-Step -Name 'generate release notes' -Action {
-  $changes = (Get-ReleaseNotesChanges -Mode $ReleaseNotesMode) -join [Environment]::NewLine
-  $verification = (Get-ReleaseNotesVerification) -join [Environment]::NewLine
-  $releaseNotes = @"
-# v$Version
-
-## Changes
-
-$changes
-
-## Verification
-
-$verification
-"@
-  Write-Utf8NoBom -FilePath $releaseNotesPath -Content $releaseNotes
+Invoke-Step -Name 'copy release notes' -Action {
+  if (-not (Test-Path -LiteralPath $releaseNotesSource)) {
+    throw "Release notes source not found: $releaseNotesSource"
+  }
+  Copy-Artifact -Source $releaseNotesSource -Destination $releaseNotesPath
 }
 
 Write-Host "Release artifacts ready: $releaseDir" -ForegroundColor Green

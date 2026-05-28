@@ -43,6 +43,21 @@ function Assert-Version {
   }
 }
 
+function Assert-ReleaseNotes {
+  param(
+    [string]$FilePath
+  )
+
+  if (-not (Test-Path -LiteralPath $FilePath)) {
+    throw "Release notes source not found: $FilePath"
+  }
+
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-release-notes.ps1 -Path $FilePath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Release notes validation failed: $FilePath"
+  }
+}
+
 if ($Version.StartsWith('v')) {
   $Version = $Version.Substring(1)
 }
@@ -66,6 +81,10 @@ Invoke-Step -Name 'verify version files' -Action {
   Assert-Version -FilePath 'src-tauri\web\Cargo.toml' -Pattern '(?m)^version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
   Assert-Version -FilePath 'src-tauri\web\Cargo.lock' -Pattern '(?ms)\[\[package\]\]\s+name\s*=\s*"acliv-web"\s+version\s*=\s*"([^"]+)"' -ExpectedVersion $Version
   Assert-Version -FilePath 'src-tauri\tauri.conf.json' -Pattern '"version"\s*:\s*"([^"]+)"' -ExpectedVersion $Version
+}
+
+Invoke-Step -Name 'verify release notes' -Action {
+  Assert-ReleaseNotes -FilePath "docs\releases\v$Version.md"
 }
 
 Invoke-Step -Name 'verify gh auth' -Action {

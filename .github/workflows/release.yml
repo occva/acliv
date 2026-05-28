@@ -54,7 +54,7 @@ jobs:
 
       - name: Build release artifacts
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version ${{ steps.version.outputs.version }} -AllowDirty -ReleaseNotesMode git
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version ${{ steps.version.outputs.version }} -AllowDirty
 
       - name: Validate release notes
         shell: pwsh
