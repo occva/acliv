@@ -291,7 +291,9 @@ fn backfill_missing_search_text(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("Failed to prepare missing search_text query: {e}"))?;
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|e| format!("Failed to query missing search_text rows: {e}"))?;
 
     let pending = rows

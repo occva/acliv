@@ -21,10 +21,12 @@ static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
         .unwrap()
 });
-static ENVIRONMENT_CONTEXT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<environment_context>[\s\S]*?</environment_context>").unwrap());
-static USER_SHELL_COMMAND_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<user_shell_command>[\s\S]*?</user_shell_command>").unwrap());
+static ENVIRONMENT_CONTEXT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<environment_context>[\s\S]*?</environment_context>").unwrap()
+});
+static USER_SHELL_COMMAND_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<user_shell_command>[\s\S]*?</user_shell_command>").unwrap()
+});
 static AGENTS_INSTRUCTIONS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?im)^\s*#\s*(?:AGENTS|CLAUDE|AGENT)\.md instructions[^\n]*(?:\n|$)").unwrap()
 });

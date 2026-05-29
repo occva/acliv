@@ -50,7 +50,12 @@ pub fn open_readonly_connection() -> Result<Connection, String> {
         &db_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|e| format!("Failed to open search DB read-only {}: {e}", db_path.display()))?;
+    .map_err(|e| {
+        format!(
+            "Failed to open search DB read-only {}: {e}",
+            db_path.display()
+        )
+    })?;
 
     connection
         .pragma_update(None, "busy_timeout", 500)
