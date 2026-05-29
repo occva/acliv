@@ -39,7 +39,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 COPY src-tauri ./src-tauri
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    sh -ec 'cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml'
+    sh -ec 'cargo clean --manifest-path src-tauri/web/Cargo.toml --package acliv-web && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml'
 
 FROM ${RUNTIME_IMAGE}
 WORKDIR /app
