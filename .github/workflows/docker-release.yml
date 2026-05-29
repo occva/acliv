@@ -24,6 +24,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout requested tag
+        if: ${{ inputs.version != '' }}
+        shell: bash
+        run: |
+          clean_version="${{ inputs.version }}"
+          clean_version="${clean_version#v}"
+          git fetch --depth=1 --force origin "refs/tags/v${clean_version}:refs/tags/v${clean_version}"
+          git checkout "v${clean_version}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -44,16 +53,24 @@ jobs:
             clean_version="${manual_version#v}"
             version="v${clean_version}"
             tags="${image}:${version},${image}:${clean_version},${image}:latest"
+            image_tag="${clean_version}"
+            build_ref="${GITHUB_SHA}"
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             version="${GITHUB_REF#refs/tags/}"
             clean_version="${version#v}"
             tags="${image}:${version},${image}:${clean_version},${image}:latest"
+            image_tag="${clean_version}"
+            build_ref="${GITHUB_SHA}"
           else
             short_sha="${GITHUB_SHA::7}"
             tags="${image}:latest,${image}:sha-${short_sha}"
+            image_tag="sha-${short_sha}"
+            build_ref="${GITHUB_SHA}"
           fi
           echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "build_ref=${build_ref}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         uses: docker/build-push-action@v6
@@ -63,6 +80,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.prep.outputs.tags }}
+          build-args: |
+            ACLIV_IMAGE_TAG=${{ steps.prep.outputs.image_tag }}
+            ACLIV_BUILD_REF=${{ steps.prep.outputs.build_ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
