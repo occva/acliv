@@ -8,6 +8,8 @@ services:
     environment:
       - ACLIV_HOST=0.0.0.0
       - ACLIV_PORT=17860
+      - ACLIV_IMAGE=${ACLIV_IMAGE:-ghcr.io/occva/acliv}
+      - ACLIV_IMAGE_TAG=${ACLIV_VERSION:-latest}
       - ACLIV_HOME=/app/data
       - ACLIV_TOKEN=${ACLIV_TOKEN:-}
       - ACLIV_WEB_AUTH_ENABLED=${ACLIV_WEB_AUTH_ENABLED:-1}

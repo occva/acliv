@@ -11,8 +11,11 @@ use axum::{
     Json, Router,
 };
 use rand::{thread_rng, Rng};
+use reqwest::header as reqwest_header;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 use tokio::task::spawn_blocking;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -145,6 +148,99 @@ struct AuthVerifyResponse {
 struct AuthConfigResponse {
     auth_enabled: bool,
     username: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppVersionInfo {
+    version: String,
+    runtime: String,
+    platform: String,
+    arch: String,
+    update_channel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateCheckResponse {
+    runtime: String,
+    update_channel: String,
+    current_version: String,
+    current_image: String,
+    current_tag: String,
+    current_build_ref: Option<String>,
+    latest_tag: String,
+    latest_digest: String,
+    latest_build_ref: Option<String>,
+    update_available: Option<bool>,
+    release_url: String,
+    update_command: String,
+}
+
+#[derive(Debug)]
+struct LatestImageInfo {
+    digest: String,
+    build_ref: Option<String>,
+}
+
+#[derive(Debug)]
+struct GhcrImageRef {
+    repository: String,
+}
+
+impl GhcrImageRef {
+    fn parse(image: &str) -> Result<Self, AppError> {
+        let image = image
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        let Some(repository) = image.strip_prefix("ghcr.io/") else {
+            return Err(AppError::bad_request(
+                "Docker update check only supports ghcr.io images",
+            )
+            .with_code("update.unsupported_image"));
+        };
+        let repository = repository
+            .split('@')
+            .next()
+            .unwrap_or(repository)
+            .rsplit_once(':')
+            .map(|(repo, _tag)| repo)
+            .unwrap_or(repository)
+            .trim_matches('/');
+
+        if repository.is_empty() || !repository.contains('/') {
+            return Err(AppError::bad_request("Invalid ghcr.io image name")
+                .with_code("update.invalid_image"));
+        }
+
+        Ok(Self {
+            repository: repository.to_string(),
+        })
+    }
+
+    fn manifest_url(&self, reference: &str) -> String {
+        format!("https://ghcr.io/v2/{}/manifests/{reference}", self.repository)
+    }
+
+    fn blob_url(&self, digest: &str) -> String {
+        format!("https://ghcr.io/v2/{}/blobs/{digest}", self.repository)
+    }
+
+    fn token_scope(&self) -> String {
+        format!("repository:{}:pull", self.repository)
+    }
+
+    fn latest_image(&self) -> String {
+        format!("ghcr.io/{}:latest", self.repository)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -316,6 +412,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let api_routes = Router::new()
         .route("/health", get(health))
+        .route("/app/version", get(get_app_version))
+        .route("/app/update-check", get(check_app_update))
         .route("/auth/config", get(get_auth_config))
         .route("/auth/login", post(login_auth))
         .merge(protected_routes);
@@ -389,6 +487,219 @@ fn derive_auth_token(username: &str, password: &str) -> String {
     hasher.update(b"\0");
     hasher.update(password.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn get_env_string(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn get_build_ref() -> Option<String> {
+    get_env_string("ACLIV_BUILD_REF").filter(|value| {
+        let normalized = value.to_ascii_lowercase();
+        normalized != "unknown" && normalized != "local-dev"
+    })
+}
+
+async fn fetch_latest_image_info(image: &str) -> Result<LatestImageInfo, AppError> {
+    let image_ref = GhcrImageRef::parse(image)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("acliv-web-update-check")
+        .build()
+        .map_err(|e| AppError::internal(format!("Failed to create update client: {e}")))?;
+    let token = fetch_ghcr_token(&client, &image_ref).await?;
+
+    let accept_manifest =
+        "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
+    let manifest_response = client
+        .get(image_ref.manifest_url("latest"))
+        .header(reqwest_header::ACCEPT, accept_manifest)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker latest check failed: {e}")))?;
+
+    if !manifest_response.status().is_success() {
+        return Err(AppError::internal(format!(
+            "Docker latest check failed: {}",
+            manifest_response.status()
+        )));
+    }
+
+    let latest_digest = manifest_response
+        .headers()
+        .get("docker-content-digest")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::internal("Docker latest digest is missing"))?;
+    let manifest = manifest_response
+        .json::<Value>()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker latest manifest is invalid: {e}")))?;
+    let config_digest = find_config_digest(&client, &token, &image_ref, &manifest).await?;
+    let build_ref = if let Some(config_digest) = config_digest {
+        fetch_image_build_ref(&client, &token, &image_ref, &config_digest).await?
+    } else {
+        None
+    };
+
+    Ok(LatestImageInfo {
+        digest: latest_digest,
+        build_ref,
+    })
+}
+
+async fn fetch_ghcr_token(
+    client: &reqwest::Client,
+    image_ref: &GhcrImageRef,
+) -> Result<String, AppError> {
+    let scope = image_ref.token_scope();
+    let response = client
+        .get("https://ghcr.io/token")
+        .query(&[("service", "ghcr.io"), ("scope", scope.as_str())])
+        .send()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker registry auth failed: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(AppError::internal(format!(
+            "Docker registry auth failed: {}",
+            response.status()
+        )));
+    }
+
+    let payload = response.json::<Value>().await.map_err(|e| {
+        AppError::internal(format!("Docker registry auth response is invalid: {e}"))
+    })?;
+    payload
+        .get("token")
+        .or_else(|| payload.get("access_token"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| AppError::internal("Docker registry auth token is missing"))
+}
+
+async fn find_config_digest(
+    client: &reqwest::Client,
+    token: &str,
+    image_ref: &GhcrImageRef,
+    manifest: &Value,
+) -> Result<Option<String>, AppError> {
+    if let Some(config_digest) = manifest
+        .get("config")
+        .and_then(|config| config.get("digest"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
+        return Ok(Some(config_digest));
+    }
+
+    let child_digest = manifest
+        .get("manifests")
+        .and_then(Value::as_array)
+        .and_then(|manifests| {
+            manifests
+                .iter()
+                .find(|entry| {
+                    entry
+                        .get("platform")
+                        .and_then(|platform| platform.get("os"))
+                        .and_then(Value::as_str)
+                        == Some("linux")
+                        && entry
+                            .get("platform")
+                            .and_then(|platform| platform.get("architecture"))
+                            .and_then(Value::as_str)
+                            == Some("amd64")
+                })
+                .or_else(|| manifests.first())
+        })
+        .and_then(|entry| entry.get("digest"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let Some(child_digest) = child_digest else {
+        return Ok(None);
+    };
+
+    let response = client
+        .get(image_ref.manifest_url(&child_digest))
+        .header(
+            reqwest_header::ACCEPT,
+            "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json",
+        )
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker image manifest check failed: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(AppError::internal(format!(
+            "Docker image manifest check failed: {}",
+            response.status()
+        )));
+    }
+
+    let child_manifest = response
+        .json::<Value>()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker image manifest is invalid: {e}")))?;
+
+    Ok(child_manifest
+        .get("config")
+        .and_then(|config| config.get("digest"))
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
+async fn fetch_image_build_ref(
+    client: &reqwest::Client,
+    token: &str,
+    image_ref: &GhcrImageRef,
+    config_digest: &str,
+) -> Result<Option<String>, AppError> {
+    let config_response = client
+        .get(image_ref.blob_url(config_digest))
+        .header(
+            reqwest_header::ACCEPT,
+            "application/vnd.oci.image.config.v1+json",
+        )
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker image config check failed: {e}")))?;
+
+    if !config_response.status().is_success() {
+        return Err(AppError::internal(format!(
+            "Docker image config check failed: {}",
+            config_response.status()
+        )));
+    }
+
+    let config = config_response
+        .json::<Value>()
+        .await
+        .map_err(|e| AppError::internal(format!("Docker image config is invalid: {e}")))?;
+
+    Ok(config
+        .get("config")
+        .and_then(|config| config.get("Env"))
+        .and_then(Value::as_array)
+        .and_then(|env| find_env_value(env, "ACLIV_BUILD_REF")))
+}
+
+fn find_env_value(values: &[Value], key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    values
+        .iter()
+        .filter_map(Value::as_str)
+        .find_map(|value| value.strip_prefix(&prefix))
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
 }
 
 fn parse_env_bool(key: &str, default: bool) -> bool {
@@ -509,6 +820,58 @@ async fn require_auth(
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { ok: true })
+}
+
+async fn get_app_version() -> Json<ApiResult<AppVersionInfo>> {
+    Json(ApiResult {
+        ok: true,
+        data: AppVersionInfo {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            runtime: "web".to_string(),
+            platform: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            update_channel: "docker-image".to_string(),
+            image: get_env_string("ACLIV_IMAGE")
+                .or_else(|| Some("ghcr.io/occva/acliv".to_string())),
+            image_tag: get_env_string("ACLIV_IMAGE_TAG")
+                .or_else(|| get_env_string("ACLIV_VERSION"))
+                .or_else(|| Some("latest".to_string())),
+            build_ref: get_build_ref(),
+        },
+    })
+}
+
+async fn check_app_update() -> Result<Json<ApiResult<AppUpdateCheckResponse>>, AppError> {
+    let image = get_env_string("ACLIV_IMAGE").unwrap_or_else(|| "ghcr.io/occva/acliv".to_string());
+    let latest_image = GhcrImageRef::parse(&image)?.latest_image();
+    let current_tag = get_env_string("ACLIV_IMAGE_TAG")
+        .or_else(|| get_env_string("ACLIV_VERSION"))
+        .unwrap_or_else(|| "latest".to_string());
+    let current_build_ref = get_build_ref();
+    let latest = fetch_latest_image_info(&image).await?;
+    let update_available = match (&current_build_ref, &latest.build_ref) {
+        (Some(current), Some(latest_ref)) => Some(current != latest_ref),
+        _ if current_tag == "latest" => None,
+        _ => Some(true),
+    };
+
+    Ok(Json(ApiResult {
+        ok: true,
+        data: AppUpdateCheckResponse {
+            runtime: "web".to_string(),
+            update_channel: "docker-image".to_string(),
+            current_version: env!("CARGO_PKG_VERSION").to_string(),
+            current_image: image.clone(),
+            current_tag,
+            current_build_ref,
+            latest_tag: "latest".to_string(),
+            latest_digest: latest.digest,
+            latest_build_ref: latest.build_ref,
+            update_available,
+            release_url: "https://github.com/occva/acliv/releases/latest".to_string(),
+            update_command: format!("docker pull {latest_image} && docker compose up -d"),
+        },
+    }))
 }
 
 async fn list_sessions() -> Result<Json<ApiResult<Vec<session_manager::SessionMeta>>>, AppError> {

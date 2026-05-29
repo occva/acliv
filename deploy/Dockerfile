@@ -4,6 +4,8 @@ ARG NODE_IMAGE=node:20-alpine
 ARG RUST_IMAGE=rust:1.94.0-alpine3.22
 ARG RUNTIME_IMAGE=alpine:3.19
 ARG CARGO_BUILD_JOBS
+ARG ACLIV_IMAGE_TAG=latest
+ARG ACLIV_BUILD_REF=unknown
 
 FROM ${NODE_IMAGE} AS frontend-builder
 WORKDIR /app
@@ -40,6 +42,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     sh -ec 'rm -rf src-tauri/web/target && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml && test "$(wc -c < src-tauri/web/target/release/acliv-web)" -gt 1000000 && grep -q "ACLIV (Web)" src-tauri/web/target/release/acliv-web'
 
 FROM ${RUNTIME_IMAGE}
+ARG ACLIV_IMAGE_TAG
+ARG ACLIV_BUILD_REF
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates curl su-exec \
@@ -57,6 +61,9 @@ RUN test "$(wc -c < /app/acliv-web)" -gt 1000000 \
 
 ENV ACLIV_HOST=0.0.0.0
 ENV ACLIV_PORT=17860
+ENV ACLIV_IMAGE=ghcr.io/occva/acliv
+ENV ACLIV_IMAGE_TAG=${ACLIV_IMAGE_TAG}
+ENV ACLIV_BUILD_REF=${ACLIV_BUILD_REF}
 ENV ACLIV_HOME=/app/data
 ENV ACLIV_CLAUDE_DIR=/host-data/claude/projects
 ENV ACLIV_CODEX_DIR=/host-data/codex/sessions
