@@ -28,9 +28,18 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg1MzZBNDAyOUI0RUQ4RjIKUldUeTJFNmJBcVEyaGFFN0hENm5WU3lhS3Z6K0lWOXg0K00yWkpYN1JpbDJmTFdEdWtPSkt3cXIK",
+      "endpoints": [
+        "https://github.com/occva/acliv/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

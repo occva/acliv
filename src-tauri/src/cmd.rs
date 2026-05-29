@@ -5,6 +5,16 @@ use crate::paths;
 use crate::search_index;
 use crate::session_manager;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppVersionInfo {
+    version: String,
+    runtime: String,
+    platform: String,
+    arch: String,
+    update_channel: String,
+}
+
 // ==================== 核心命令 ====================
 
 /// 扫描所有 provider 的会话列表
@@ -297,6 +307,17 @@ pub async fn delete_session(
     .map_err(|e| format!("Failed to delete session: {e}"))?
 }
 
+#[tauri::command]
+pub async fn get_app_version() -> Result<AppVersionInfo, String> {
+    Ok(AppVersionInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        runtime: "desktop".to_string(),
+        platform: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        update_channel: "desktop-release".to_string(),
+    })
+}
+
 // ==================== 系统终端 / 文件管理器 ====================
 
 /// 在桌面系统终端中执行恢复命令。
@@ -426,12 +447,17 @@ fn launch_macos_terminal(
     cwd: Option<&str>,
     terminal_kind: Option<&str>,
 ) -> Result<bool, String> {
-    use std::process::Command;
-
     match terminal_kind {
-        None | Some("terminal") => {}
+        None | Some("terminal") => launch_macos_terminal_app(command, cwd),
+        Some("iterm") | Some("iterm2") => launch_macos_iterm(command, cwd),
+        Some("ghostty") => launch_macos_ghostty(command, cwd),
         Some(other) => return Err(format!("Unsupported terminal kind on macOS: {other}")),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_terminal_app(command: &str, cwd: Option<&str>) -> Result<bool, String> {
+    use std::process::Command;
 
     let shell_command = build_macos_terminal_command(command, cwd)?;
     let do_script = format!("do script {}", quote_applescript_string(&shell_command));
@@ -449,6 +475,88 @@ fn launch_macos_terminal(
         ])
         .spawn()
         .map_err(|e| format!("Failed to launch Terminal: {e}"))?;
+
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_iterm(command: &str, cwd: Option<&str>) -> Result<bool, String> {
+    use std::process::Command;
+
+    let shell_command = build_macos_terminal_command(command, cwd)?;
+    let script = format!(
+        r#"set launcher_command to {}
+set was_running to application "iTerm" is running
+tell application "iTerm"
+    if was_running then
+        activate
+        if (count of windows) = 0 then
+            create window with default profile
+        else
+            tell current window
+                create tab with default profile
+            end tell
+        end if
+    else
+        activate
+        set waited to 0
+        repeat while (count of windows) = 0
+            delay 0.1
+            set waited to waited + 1
+            if waited >= 30 then exit repeat
+        end repeat
+        if (count of windows) = 0 then
+            create window with default profile
+        end if
+    end if
+    tell current session of current window
+        write text launcher_command
+    end tell
+end tell"#,
+        quote_applescript_string(&shell_command),
+    );
+
+    Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .spawn()
+        .map_err(|e| format!("Failed to launch iTerm: {e}"))?;
+
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_ghostty(command: &str, cwd: Option<&str>) -> Result<bool, String> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let trimmed_command = command.trim();
+    if trimmed_command.is_empty() {
+        return Err("Command is required".to_string());
+    }
+
+    let mut process = Command::new("open");
+    process.args([
+        "-na",
+        "Ghostty",
+        "--args",
+        "--quit-after-last-window-closed=true",
+    ]);
+    if let Some(dir) = cwd.filter(|dir| !dir.trim().is_empty()) {
+        let target = Path::new(dir);
+        if !target.exists() {
+            return Err(format!("Working directory not found: {dir}"));
+        }
+        if !target.is_dir() {
+            return Err(format!("Working directory is not a directory: {dir}"));
+        }
+        process.arg(format!("--working-directory={dir}"));
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    process.args(["-e", &shell, "-l", "-c", trimmed_command]);
+    process
+        .spawn()
+        .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
 
     Ok(true)
 }

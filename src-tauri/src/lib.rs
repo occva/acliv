@@ -17,6 +17,8 @@ use cmd::*;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -55,6 +57,7 @@ pub fn run() {
             get_indexed_session_messages,
             get_session_messages,
             delete_session,
+            get_app_version,
             launch_session_terminal,
             open_in_file_explorer,
         ])
