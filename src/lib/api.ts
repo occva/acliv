@@ -17,6 +17,39 @@ export interface WebAuthConfig {
     username: string;
 }
 
+export interface AppVersionInfo {
+    version: string;
+    runtime: 'desktop' | 'web' | string;
+    platform: string;
+    arch: string;
+    updateChannel: string;
+    image?: string;
+    imageTag?: string;
+    buildRef?: string;
+}
+
+export interface LatestReleaseInfo {
+    version: string;
+    tagName: string;
+    url: string;
+    publishedAt?: string;
+}
+
+export interface AppUpdateCheckInfo {
+    runtime: 'desktop' | 'web' | string;
+    updateChannel: string;
+    currentVersion: string;
+    currentImage: string;
+    currentTag: string;
+    currentBuildRef?: string;
+    latestTag: string;
+    latestDigest: string;
+    latestBuildRef?: string;
+    updateAvailable?: boolean | null;
+    releaseUrl: string;
+    updateCommand: string;
+}
+
 // ==================== 类型定义 ====================
 
 /** 会话元信息（来自 Rust SessionMeta） */
@@ -175,7 +208,7 @@ interface ApiResponse<T> {
     code?: string;
 }
 
-export type TerminalKind = 'cmd' | 'powershell' | 'terminal';
+export type TerminalKind = 'cmd' | 'powershell' | 'terminal' | 'iterm' | 'ghostty';
 
 type ApiClientError = Error & {
     code?: string;
@@ -233,6 +266,9 @@ interface BackendAdapter {
     refreshSearchIndex: () => Promise<RefreshSearchIndexResult>;
     getSearchIndexStatus: () => Promise<SearchIndexStatus>;
     deleteSession: (options: DeleteSessionOptions) => Promise<boolean>;
+    getAppVersion: () => Promise<AppVersionInfo>;
+    getLatestRelease: () => Promise<LatestReleaseInfo>;
+    checkAppUpdate: () => Promise<AppUpdateCheckInfo>;
     launchTerminal: (
         command: string,
         cwd?: string | null,
@@ -424,6 +460,11 @@ const tauriAdapter: BackendAdapter = {
     getSearchIndexStatus: () => invoke('get_search_index_status'),
     deleteSession: ({ providerId, sessionId, sourcePath }) =>
         invoke('delete_session', { providerId, sessionId, sourcePath }),
+    getAppVersion: () => invoke('get_app_version'),
+    getLatestRelease: () => fetchLatestRelease(),
+    checkAppUpdate: async () => {
+        throwLocalizedError('feature.web_only', 'Not supported in desktop mode');
+    },
     launchTerminal: (command, cwd, terminalKind) =>
         invoke('launch_session_terminal', { command, cwd, terminalKind }),
     openInFileExplorer: (path) =>
@@ -510,6 +551,9 @@ const webAdapter: BackendAdapter = {
             method: 'POST',
             body: JSON.stringify({ providerId, sessionId, sourcePath }),
         }),
+    getAppVersion: () => fetchPublicApi('/api/app/version', { method: 'GET' }),
+    getLatestRelease: () => fetchLatestRelease(),
+    checkAppUpdate: () => fetchPublicApi('/api/app/update-check', { method: 'GET' }),
     launchTerminal: async () => {
         throwLocalizedError('feature.web_only', 'Not supported in web mode');
     },
@@ -622,6 +666,18 @@ export async function deleteSession(
     return getAdapter().deleteSession(options);
 }
 
+export async function getAppVersion(): Promise<AppVersionInfo> {
+    return getAdapter().getAppVersion();
+}
+
+export async function getLatestRelease(): Promise<LatestReleaseInfo> {
+    return getAdapter().getLatestRelease();
+}
+
+export async function checkAppUpdate(): Promise<AppUpdateCheckInfo> {
+    return getAdapter().checkAppUpdate();
+}
+
 /**
  * 在终端执行恢复命令（仅 Tauri 支持）
  * Web 模式会返回 not supported
@@ -637,4 +693,34 @@ export async function launchTerminal(
 /** 在文件管理器中打开目录或定位文件（仅 Tauri 支持） */
 export async function openInFileExplorer(path: string): Promise<boolean> {
     return getAdapter().openInFileExplorer(path);
+}
+
+async function fetchLatestRelease(): Promise<LatestReleaseInfo> {
+    const response = await fetch('https://api.github.com/repos/occva/acliv/releases/latest', {
+        method: 'GET',
+        headers: {
+            Accept: 'application/vnd.github+json',
+        },
+    });
+
+    if (!response.ok) {
+        throw createApiClientError(`GitHub release request failed: ${response.status}`);
+    }
+
+    const release = await response.json() as {
+        tag_name?: string;
+        html_url?: string;
+        published_at?: string;
+    };
+    const tagName = release.tag_name?.trim();
+    if (!tagName) {
+        throw createApiClientError('Latest release tag is missing');
+    }
+
+    return {
+        version: tagName.replace(/^v/i, ''),
+        tagName,
+        url: release.html_url || 'https://github.com/occva/acliv/releases/latest',
+        publishedAt: release.published_at,
+    };
 }

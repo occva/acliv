@@ -1,10 +1,14 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import packageJson from './package.json'
 
 // https://vitejs.dev/config/
 export default defineConfig({
     plugins: [svelte()],
     base: './', // Ensure relative paths for Tauri
+    define: {
+        'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version),
+    },
 
 
     // Vite options tailored for Tauri development

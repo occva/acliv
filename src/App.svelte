@@ -2,6 +2,8 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import * as api from './lib/api';
+  import type { UpdateHandle, UpdateInfo } from './lib/updater';
+  import { checkForUpdate, relaunchApp } from './lib/updater';
   import {
     getInitialLocale,
     setLocale as persistLocale,
@@ -27,6 +29,7 @@
     empty_box: `<path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75C0 1.784.784 1 1.75 1ZM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/>`,
     database: `<path d="M8 1.25c-3.59 0-5.75 1.16-5.75 2.5v8.5c0 1.34 2.16 2.5 5.75 2.5s5.75-1.16 5.75-2.5v-8.5c0-1.34-2.16-2.5-5.75-2.5Zm0 1.5c2.91 0 4.25.84 4.25 1s-1.34 1-4.25 1-4.25-.84-4.25-1 1.34-1 4.25-1Zm-4.25 3.1c1.11.63 2.74.9 4.25.9s3.14-.27 4.25-.9v1.4c0 .16-1.34 1-4.25 1s-4.25-.84-4.25-1v-1.4Zm0 3.5c1.11.63 2.74.9 4.25.9s3.14-.27 4.25-.9v1.4c0 .16-1.34 1-4.25 1s-4.25-.84-4.25-1v-1.4Zm4.25 3.9c-2.91 0-4.25-.84-4.25-1v-1.4c1.11.63 2.74.9 4.25.9s3.14-.27 4.25-.9v1.4c0 .16-1.34 1-4.25 1Z"/>`,
     refresh: `<path fill-rule="evenodd" d="M8 2.25a5.75 5.75 0 1 0 5.527 7.344.75.75 0 0 1 1.444.402A7.25 7.25 0 1 1 13.11 3.57v-1.32a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h1.717A5.715 5.715 0 0 0 8 2.25Z"/>`,
+    info: `<path fill-rule="evenodd" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM2.5 8a5.5 5.5 0 1 1 11 0A5.5 5.5 0 0 1 2.5 8ZM8 6.75a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 6.75ZM8 5.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"/>`,
     back: `<svg viewBox="0 0 1024 1024" width="14" height="14" fill="currentColor"><path d="M604.8 407.68H158.72L375.68 198.4c17.92-17.28 17.92-46.08 0-63.36a48.384 48.384 0 0 0-65.92 0L13.44 421.12c-17.92 17.28-17.92 46.08 0 63.36l296.32 286.08c17.92 17.28 47.36 17.28 65.92 0 17.92-17.28 17.92-46.08 0-63.36L158.72 497.92h446.08c179.84 0 325.76 140.8 325.76 314.88v44.8c0 24.96 21.12 44.8 46.72 44.8 25.6 0 46.72-20.48 46.72-44.8v-44.8c0-224-187.52-405.12-419.2-405.12z"></path></svg>`,
     dropdown_arrow: `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M12.78 6.22a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 7.28a.75.75 0 0 1 1.06-1.06L8 9.94l3.72-3.72a.75.75 0 0 1 1.06 0Z"></path></svg>`
   };
@@ -117,7 +120,8 @@
   }
   type SearchTimeRange = 'all' | '7d' | '30d' | '90d';
   type SearchSort = 'relevance' | 'recent';
-  type IndexModalTab = 'overview' | 'sessions' | 'providers';
+  type IndexModalTab = 'overview' | 'sessions' | 'providers' | 'about';
+  type UpdateStatus = 'idle' | 'checking' | 'available' | 'unknown' | 'current' | 'updating' | 'restarting' | 'error';
   type IndexLibraryItem = api.IndexedSession;
   type RouteMode = 'push' | 'replace' | 'none';
   type MarkdownComponentType = typeof import('./lib/components/Markdown.svelte').default;
@@ -146,6 +150,7 @@
   const SOURCE_STORAGE_KEY = 'source';
   const PROJECT_LIST_PATH_MODE_STORAGE_KEY = 'acliv:project-list-path-mode';
   const SESSION_ID_VISIBILITY_STORAGE_KEY = 'acliv:show-session-ids';
+  const APP_VERSION = import.meta.env.VITE_APP_VERSION || '1.0.13';
   let locale = $state<Locale>(getInitialLocale());
 
   function t(key: TranslationKey, params?: TranslationParams): string {
@@ -358,6 +363,8 @@
   let indexLibraryPage = $state(1);
   let indexLibraryProviderFilter = $state('all');
   let indexLibraryProjectFilter = $state('all');
+  let isIndexProviderDropdownOpen = $state(false);
+  let isIndexProjectDropdownOpen = $state(false);
   let isIndexLibraryLoading = $state(false);
   let searchRequestToken = 0;
   let searchTimeRange = $state<SearchTimeRange>('all');
@@ -392,7 +399,17 @@
   let MarkdownComponent = $state<MarkdownComponentType | null>(null);
   let deleteTarget = $state<SessionMeta | null>(null);
   let isProjectMenuOpen = $state(false);
+  let isTerminalMenuOpen = $state(false);
   let isConversationRefreshing = $state(false);
+  let appVersionInfo = $state<api.AppVersionInfo | null>(null);
+  let latestRelease = $state<api.LatestReleaseInfo | null>(null);
+  let webUpdateInfo = $state<api.AppUpdateCheckInfo | null>(null);
+  let desktopUpdateInfo = $state<UpdateInfo | null>(null);
+  let desktopUpdateHandle = $state<UpdateHandle | null>(null);
+  let updateDownloadedBytes = $state(0);
+  let updateTotalBytes = $state(0);
+  let updateStatus = $state<UpdateStatus>('idle');
+  let updateError = $state<UiMessage | null>(null);
   let authInitialized = $state(!isWebMode);
   let isAuthenticated = $state(!isWebMode);
   let showAuthCheckingCard = $state(false);
@@ -468,9 +485,25 @@
   }
 
   async function bootstrapAuthenticatedApp() {
+    await loadAppVersionInfo();
     await loadData();
     await syncConversationFromRoute();
     scheduleSearchIndexBootstrap();
+  }
+
+  async function loadAppVersionInfo() {
+    try {
+      appVersionInfo = await api.getAppVersion();
+    } catch (e) {
+      console.error('Failed to load app version:', e);
+      appVersionInfo = {
+        version: APP_VERSION,
+        runtime: isWebMode ? 'web' : 'desktop',
+        platform: document.documentElement.dataset.platform || 'unknown',
+        arch: 'unknown',
+        updateChannel: isWebMode ? 'docker-image' : 'desktop-release',
+      };
+    }
   }
 
   function loadMarkdownRenderer(): Promise<MarkdownComponentType | null> {
@@ -654,6 +687,7 @@
   function goToConversationList(routeMode: RouteMode = isWebMode ? 'push' : 'none') {
     persistConversationScrollState();
     isProjectMenuOpen = false;
+    isTerminalMenuOpen = false;
     activeSearchMatch = null;
     clearConversationProgress();
     conversationProgressResizeObserver?.disconnect();
@@ -1449,10 +1483,13 @@
   function terminalOpenedMessage(kind: api.TerminalKind): UiMessage {
       if (kind === 'cmd') return keyMessage('toast.opened_in_cmd');
       if (kind === 'powershell') return keyMessage('toast.opened_in_powershell');
+      if (kind === 'iterm') return keyMessage('toast.opened_in_iterm');
+      if (kind === 'ghostty') return keyMessage('toast.opened_in_ghostty');
       return keyMessage('toast.opened_in_terminal');
   }
 
-  async function openResumeTerminal(kind: api.TerminalKind) {
+  async function openResumeTerminal(kind: api.TerminalKind, event?: MouseEvent) {
+      event?.stopPropagation();
       const target = currentConversation
           ? getSessionById(currentConversation.session_id, currentConversation.source_type)
           : null;
@@ -1472,11 +1509,17 @@
               }
           }
           await api.launchTerminal(target.resumeCommand, target.cwd ?? target.projectDir, kind);
+          isTerminalMenuOpen = false;
           showFeedback(terminalOpenedMessage(kind), 'success');
       } catch (e) {
           console.error('Launch terminal failed:', e);
           showFeedback(keyMessage('toast.launch_terminal_failed'), 'error');
       }
+  }
+
+  function toggleTerminalMenu(event: MouseEvent) {
+      event.stopPropagation();
+      isTerminalMenuOpen = !isTerminalMenuOpen;
   }
 
   function toggleProjectMenu(event: MouseEvent) {
@@ -2265,6 +2308,116 @@
 
   function closeIndexModal() {
       isIndexModalOpen = false;
+      isIndexProviderDropdownOpen = false;
+      isIndexProjectDropdownOpen = false;
+  }
+
+  function getUpdateButtonLabel(): string {
+      if (updateStatus === 'checking') return t('about.checking');
+      if (updateStatus === 'updating') return t('about.updating');
+      if (updateStatus === 'restarting') return t('about.restarting');
+      if (!isWebMode && updateStatus === 'available' && desktopUpdateInfo) {
+          return t('about.update_to', { version: `v${desktopUpdateInfo.availableVersion}` });
+      }
+      return t('about.check_updates');
+  }
+
+  function getUpdateProgressText(): string {
+      if (updateTotalBytes <= 0 || updateStatus !== 'updating') return '';
+      const percent = Math.min(100, Math.round((updateDownloadedBytes / updateTotalBytes) * 100));
+      return t('about.update_progress', { percent });
+  }
+
+  async function checkForUpdates() {
+      if (updateStatus === 'checking' || updateStatus === 'updating' || updateStatus === 'restarting') return;
+      if (!isWebMode && updateStatus === 'available' && desktopUpdateHandle) {
+          await installDesktopUpdate();
+          return;
+      }
+
+      updateStatus = 'checking';
+      updateError = null;
+      webUpdateInfo = null;
+      updateDownloadedBytes = 0;
+      updateTotalBytes = 0;
+
+      try {
+          if (isWebMode) {
+              const update = await api.checkAppUpdate();
+              webUpdateInfo = update;
+              latestRelease = {
+                  version: update.latestTag.replace(/^v/i, ''),
+                  tagName: update.latestTag,
+                  url: update.releaseUrl,
+              };
+              if (update.updateAvailable === true) {
+                  updateStatus = 'available';
+              } else if (update.updateAvailable === false) {
+                  updateStatus = 'current';
+                  showFeedback(keyMessage('about.up_to_date'), 'success');
+              } else {
+                  updateStatus = 'unknown';
+              }
+              return;
+          }
+
+          const result = await checkForUpdate({ timeout: 30000 });
+          if (result.status === 'available') {
+              desktopUpdateInfo = result.info;
+              desktopUpdateHandle = result.update;
+              latestRelease = {
+                  version: result.info.availableVersion,
+                  tagName: `v${result.info.availableVersion}`,
+                  url: `https://github.com/occva/acliv/releases/tag/v${result.info.availableVersion}`,
+                  publishedAt: result.info.pubDate,
+              };
+              updateStatus = 'available';
+          } else {
+              desktopUpdateInfo = null;
+              desktopUpdateHandle = null;
+              updateStatus = 'current';
+              showFeedback(keyMessage('about.up_to_date'), 'success');
+          }
+      } catch (e) {
+          console.error('Check update failed:', e);
+          updateStatus = 'error';
+          updateError = uiMessageFromError(e);
+          showFeedback(keyMessage('about.check_failed'), 'error');
+      }
+  }
+
+  async function installDesktopUpdate() {
+      if (!desktopUpdateHandle) return;
+
+      updateStatus = 'updating';
+      updateError = null;
+      updateDownloadedBytes = 0;
+      updateTotalBytes = 0;
+
+      try {
+          await desktopUpdateHandle.downloadAndInstall((event) => {
+              if (event.event === 'Started') {
+                  updateTotalBytes = event.total ?? 0;
+                  updateDownloadedBytes = 0;
+              } else if (event.event === 'Progress') {
+                  updateDownloadedBytes += event.downloaded ?? 0;
+              }
+          });
+          updateStatus = 'restarting';
+          await relaunchApp();
+      } catch (e) {
+          console.error('Install update failed:', e);
+          updateStatus = 'error';
+          updateError = uiMessageFromError(e);
+          showFeedback(keyMessage('about.update_failed'), 'error');
+      }
+  }
+
+  async function copyWebUpdateCommand() {
+      await copyText(
+          webUpdateInfo?.updateCommand ?? 'docker pull ghcr.io/occva/acliv:latest && docker compose up -d',
+          keyMessage('toast.update_command_copied'),
+      );
   }
 
   async function setIndexModalTab(tab: IndexModalTab) {
@@ -2273,6 +2426,8 @@
           await refreshIndexLibrary(false, true);
       } else if (tab === 'providers') {
           await refreshProviderPaths();
+      } else if (tab === 'about' && !appVersionInfo) {
+          await loadAppVersionInfo();
       }
   }
 
@@ -2346,13 +2501,55 @@
       if (isProjectMenuOpen) {
           isProjectMenuOpen = false;
       }
+      if (isTerminalMenuOpen) {
+          isTerminalMenuOpen = false;
+      }
+      if (isIndexProviderDropdownOpen) {
+          isIndexProviderDropdownOpen = false;
+      }
+      if (isIndexProjectDropdownOpen) {
+          isIndexProjectDropdownOpen = false;
+      }
+  }
+
+  function closeEscapeTarget(options: { allowNavigation?: boolean } = {}): boolean {
+      const allowNavigation = options.allowNavigation ?? true;
+      if (isSearchModalOpen) {
+          closeSearch();
+          return true;
+      }
+      if (isIndexProviderDropdownOpen) {
+          isIndexProviderDropdownOpen = false;
+          return true;
+      }
+      if (isIndexProjectDropdownOpen) {
+          isIndexProjectDropdownOpen = false;
+          return true;
+      }
+      if (isTerminalMenuOpen) {
+          isTerminalMenuOpen = false;
+          return true;
+      }
+      if (isProjectMenuOpen) {
+          isProjectMenuOpen = false;
+          return true;
+      }
+      if (isIndexModalOpen) {
+          closeIndexModal();
+          return true;
+      }
+      if (allowNavigation && currentView === 'detail') {
+          goToConversationList();
+          return true;
+      }
+
+      return false;
   }
 
   function handleGlobalKeydown(e: KeyboardEvent) {
       // Disable global hotkeys while user is typing.
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
-          if (e.key === 'Escape' && isSearchModalOpen) closeSearch();
-          if (e.key === 'Escape' && isIndexModalOpen) closeIndexModal();
+          if (e.key === 'Escape' && closeEscapeTarget({ allowNavigation: false })) e.preventDefault();
           return;
       }
 
@@ -2361,10 +2558,7 @@
           openSearch();
       }
       if (e.key === 'Escape') {
-          if (isSearchModalOpen) closeSearch();
-          else if (isIndexModalOpen) closeIndexModal();
-          else if (isProjectMenuOpen) isProjectMenuOpen = false;
-          else if (currentView === 'detail') goToConversationList();
+          closeEscapeTarget();
       }
       
       if (!isSearchModalOpen && !isIndexModalOpen && currentView === 'list' && projects.length > 0) {
@@ -2446,6 +2640,46 @@
       if (source === 'override') return t('index.path_source.override');
       if (source === 'default') return t('index.path_source.default');
       return source;
+  }
+
+  function indexProviderFilterLabel(): string {
+      return indexLibraryProviderFilter === 'all'
+          ? t('index.all_providers')
+          : providerDisplayName(indexLibraryProviderFilter);
+  }
+
+  function indexProjectOptionLabel(project: api.IndexedProjectOption): string {
+      return `${project.projectName || baseName(project.project) || project.project} (${project.sessionsCount})`;
+  }
+
+  function indexProjectFilterLabel(): string {
+      if (indexLibraryProjectFilter === 'all') return t('index.all_projects');
+      const project = indexProjectOptions.find(item => item.project === indexLibraryProjectFilter);
+      return project ? indexProjectOptionLabel(project) : baseName(indexLibraryProjectFilter) || indexLibraryProjectFilter;
+  }
+
+  function toggleIndexProviderDropdown(event: MouseEvent) {
+      event.stopPropagation();
+      isIndexProviderDropdownOpen = !isIndexProviderDropdownOpen;
+      isIndexProjectDropdownOpen = false;
+  }
+
+  function toggleIndexProjectDropdown(event: MouseEvent) {
+      event.stopPropagation();
+      isIndexProjectDropdownOpen = !isIndexProjectDropdownOpen;
+      isIndexProviderDropdownOpen = false;
+  }
+
+  async function chooseIndexProviderFilter(providerId: string, event?: MouseEvent) {
+      event?.stopPropagation();
+      isIndexProviderDropdownOpen = false;
+      await setIndexLibraryProviderFilter(providerId);
+  }
+
+  async function chooseIndexProjectFilter(projectPath: string, event?: MouseEvent) {
+      event?.stopPropagation();
+      isIndexProjectDropdownOpen = false;
+      await setIndexLibraryProjectFilter(projectPath);
   }
 
   async function openProviderPath(path: string) {
@@ -2766,19 +3000,27 @@
                                                 class="inline-icon-btn"
                                                 type="button"
                                                 title={t('detail.open_terminal')}
+                                                aria-expanded={isTerminalMenuOpen}
+                                                onclick={toggleTerminalMenu}
                                             >
                                                 {@html getIcon('terminal', 14)}
                                             </button>
-                                            <div class="hover-menu">
+                                            <div class="hover-menu" class:show-menu={isTerminalMenuOpen}>
                                                 {#if isMacDesktop}
-                                                    <button type="button" onclick={() => openResumeTerminal('terminal')}>
+                                                    <button type="button" onclick={(event) => openResumeTerminal('terminal', event)}>
                                                         {t('detail.open_in_terminal_app')}
                                                     </button>
+                                                    <button type="button" onclick={(event) => openResumeTerminal('iterm', event)}>
+                                                        {t('detail.open_in_iterm')}
+                                                    </button>
+                                                    <button type="button" onclick={(event) => openResumeTerminal('ghostty', event)}>
+                                                        {t('detail.open_in_ghostty')}
+                                                    </button>
                                                 {:else}
-                                                    <button type="button" onclick={() => openResumeTerminal('cmd')}>
+                                                    <button type="button" onclick={(event) => openResumeTerminal('cmd', event)}>
                                                         {t('detail.open_in_cmd')}
                                                     </button>
-                                                    <button type="button" onclick={() => openResumeTerminal('powershell')}>
+                                                    <button type="button" onclick={(event) => openResumeTerminal('powershell', event)}>
                                                         {t('detail.open_in_powershell')}
                                                     </button>
                                                 {/if}
@@ -3115,6 +3357,14 @@
               >
                   {t('index.provider_paths')}
               </button>
+              <button
+                  class="index-tab-btn"
+                  class:active={indexModalTab === 'about'}
+                  type="button"
+                  onclick={() => void setIndexModalTab('about')}
+              >
+                  {t('about.title')}
+              </button>
           </div>
 
           {#if indexModalTab === 'overview'}
@@ -3344,6 +3594,103 @@
                       {/if}
                   </div>
               </div>
+          {:else if indexModalTab === 'about'}
+              <div class="about-tab-section">
+                  <div class="about-section">
+                      <div class="about-version-row">
+                          <span>{t('about.current_version')}</span>
+                          <strong>v{appVersionInfo?.version ?? APP_VERSION}</strong>
+                      </div>
+                      <div class="about-meta-grid">
+                          <div>
+                              <span>{t('about.runtime')}</span>
+                              <strong>{appVersionInfo?.runtime ?? (isWebMode ? 'web' : 'desktop')}</strong>
+                          </div>
+                          <div>
+                              <span>{t('about.platform')}</span>
+                              <strong>{appVersionInfo?.platform ?? document.documentElement.dataset.platform ?? 'unknown'}</strong>
+                          </div>
+                          <div>
+                              <span>{t('about.channel')}</span>
+                              <strong>{appVersionInfo?.updateChannel ?? (isWebMode ? 'docker-image' : 'desktop-release')}</strong>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div class="about-section">
+                      <div class="about-update-head">
+                          <div>
+                              <h4>{t('about.updates')}</h4>
+                              {#if latestRelease}
+                                  <p>{t('about.latest_version')}: {latestRelease.tagName}</p>
+                              {:else}
+                                  <p>{isWebMode ? t('about.web_update_hint') : t('about.update_hint')}</p>
+                              {/if}
+                          </div>
+                          <button
+                              class="index-action-btn"
+                              type="button"
+                              onclick={() => void checkForUpdates()}
+                              disabled={updateStatus === 'checking' || updateStatus === 'updating' || updateStatus === 'restarting'}
+                          >
+                              {getUpdateButtonLabel()}
+                          </button>
+                      </div>
+
+                      {#if updateStatus === 'available' && latestRelease}
+                          <div class="about-update-callout">
+                              <strong>{isWebMode ? t('about.web_update_ready') : t('about.update_available', { version: latestRelease.tagName })}</strong>
+                              <p>{isWebMode ? t('about.web_update_guidance') : t('about.desktop_update_guidance')}</p>
+                              <div class="about-update-actions">
+                                  {#if isWebMode}
+                                      <button class="index-action-btn" type="button" onclick={() => void copyWebUpdateCommand()}>
+                                          {t('about.copy_update_command')}
+                                      </button>
+                                  {/if}
+                                  <a class="index-action-btn about-link-btn" href={latestRelease.url} target="_blank" rel="noreferrer">
+                                      {t('about.open_release')}
+                                  </a>
+                              </div>
+                          </div>
+                      {:else if updateStatus === 'unknown' && webUpdateInfo}
+                          <div class="about-update-callout">
+                              <strong>{t('about.web_latest_checked')}</strong>
+                              <p>{t('about.web_update_unknown_guidance')}</p>
+                              <div class="about-update-actions">
+                                  <button class="index-action-btn" type="button" onclick={() => void copyWebUpdateCommand()}>
+                                      {t('about.copy_update_command')}
+                                  </button>
+                                  <a class="index-action-btn about-link-btn" href={webUpdateInfo.releaseUrl} target="_blank" rel="noreferrer">
+                                      {t('about.open_release')}
+                                  </a>
+                              </div>
+                          </div>
+                      {:else if updateStatus === 'updating' || updateStatus === 'restarting'}
+                          <div class="about-update-callout">
+                              <strong>{updateStatus === 'restarting' ? t('about.restarting') : t('about.updating')}</strong>
+                              {#if getUpdateProgressText()}
+                                  <p>{getUpdateProgressText()}</p>
+                              {/if}
+                          </div>
+                      {:else if updateStatus === 'current'}
+                          <div class="about-update-callout ok">
+                              <strong>{t('about.up_to_date')}</strong>
+                          </div>
+                      {:else if updateStatus === 'error'}
+                          <div class="about-update-callout warn">
+                              <strong>{t('about.check_failed')}</strong>
+                              {#if updateError}
+                                  <p>{resolveMessage(updateError)}</p>
+                              {/if}
+                              <div class="about-update-actions">
+                                  <a class="index-action-btn about-link-btn" href="https://github.com/occva/acliv/releases/latest" target="_blank" rel="noreferrer">
+                                      {t('about.open_release')}
+                                  </a>
+                              </div>
+                          </div>
+                      {/if}
+                  </div>
+              </div>
           {:else}
               <div class="index-library-section">
                   <div class="index-library-header">
@@ -3355,34 +3702,77 @@
                   </div>
 
                   <div class="index-library-filters">
-                      <label class="index-filter-field">
+                      <div class="index-filter-field">
                           <span>{t('common.provider')}</span>
-                          <select
-                              class="index-filter-select"
-                              value={indexLibraryProviderFilter}
-                              onchange={(event) => void setIndexLibraryProviderFilter((event.currentTarget as HTMLSelectElement).value)}
-                          >
-                              <option value="all">{t('index.all_providers')}</option>
-                              {#each sources as source}
-                                  <option value={source}>{providerDisplayName(source)}</option>
-                              {/each}
-                          </select>
-                      </label>
-                      <label class="index-filter-field">
+                          <div class="filter-dropdown">
+                              <button
+                                  class="source-toggle filter-dropdown-toggle"
+                                  class:active={isIndexProviderDropdownOpen}
+                                  type="button"
+                                  onclick={toggleIndexProviderDropdown}
+                                  aria-expanded={isIndexProviderDropdownOpen}
+                              >
+                                  <span class="source-title filter-dropdown-title">{indexProviderFilterLabel()}</span>
+                                  <span class="dropdown-arrow">{@html ICONS.dropdown_arrow}</span>
+                              </button>
+                              <div class="source-dropdown filter-dropdown-menu" class:show={isIndexProviderDropdownOpen}>
+                                  <button
+                                      class="source-item"
+                                      class:selected={indexLibraryProviderFilter === 'all'}
+                                      type="button"
+                                      onclick={(event) => void chooseIndexProviderFilter('all', event)}
+                                  >
+                                      {t('index.all_providers')}
+                                  </button>
+                                  {#each sources as source}
+                                      <button
+                                          class="source-item"
+                                          class:selected={indexLibraryProviderFilter === source}
+                                          type="button"
+                                          onclick={(event) => void chooseIndexProviderFilter(source, event)}
+                                      >
+                                          {providerDisplayName(source)}
+                                      </button>
+                                  {/each}
+                              </div>
+                          </div>
+                      </div>
+                      <div class="index-filter-field">
                           <span>{t('common.project')}</span>
-                          <select
-                              class="index-filter-select"
-                              value={indexLibraryProjectFilter}
-                              onchange={(event) => void setIndexLibraryProjectFilter((event.currentTarget as HTMLSelectElement).value)}
-                          >
-                              <option value="all">{t('index.all_projects')}</option>
-                              {#each indexProjectOptions as project}
-                                  <option value={project.project}>
-                                      {project.projectName || baseName(project.project) || project.project} ({project.sessionsCount})
-                                  </option>
-                              {/each}
-                          </select>
-                      </label>
+                          <div class="filter-dropdown">
+                              <button
+                                  class="source-toggle filter-dropdown-toggle"
+                                  class:active={isIndexProjectDropdownOpen}
+                                  type="button"
+                                  onclick={toggleIndexProjectDropdown}
+                                  aria-expanded={isIndexProjectDropdownOpen}
+                              >
+                                  <span class="source-title filter-dropdown-title">{indexProjectFilterLabel()}</span>
+                                  <span class="dropdown-arrow">{@html ICONS.dropdown_arrow}</span>
+                              </button>
+                              <div class="source-dropdown filter-dropdown-menu" class:show={isIndexProjectDropdownOpen}>
+                                  <button
+                                      class="source-item"
+                                      class:selected={indexLibraryProjectFilter === 'all'}
+                                      type="button"
+                                      onclick={(event) => void chooseIndexProjectFilter('all', event)}
+                                  >
+                                      {t('index.all_projects')}
+                                  </button>
+                                  {#each indexProjectOptions as project}
+                                      <button
+                                          class="source-item"
+                                          class:selected={indexLibraryProjectFilter === project.project}
+                                          type="button"
+                                          title={project.project}
+                                          onclick={(event) => void chooseIndexProjectFilter(project.project, event)}
+                                      >
+                                          {indexProjectOptionLabel(project)}
+                                      </button>
+                                  {/each}
+                              </div>
+                          </div>
+                      </div>
                   </div>
 
                   <div class="index-library-list">
