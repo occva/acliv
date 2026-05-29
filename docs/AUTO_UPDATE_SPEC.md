@@ -1,159 +1,203 @@
-# ACLIV In-App Update Button Spec
+# In-App Update Button Spec
 
-## Summary
+## Purpose
 
-ACLIV needs an in-app update surface for both desktop and web mode.
+This document describes a reusable design for adding an in-app update button to
+an application that has both desktop and web/runtime deployments.
 
-Desktop can perform a real one-click update: users click the button, the app
-checks the latest GitHub Release, downloads the matching installer through
-Tauri's updater, installs it, and relaunches into the newest version.
+The goal is to provide one clear user action:
 
-Web cannot self-replace the running server from the browser. Web mode should
-show current server version, check the latest release, and provide a clear
-server-side update action or command handoff. If ACLIV later ships a managed web
-service wrapper, that wrapper may expose a protected server-side update command.
+```text
+Check for updates -> show result -> install or show deployment guidance
+```
 
-This spec is based on `D:\code\cc-switch`'s desktop updater pattern and a
-separate web update strategy for ACLIV's Rust web server.
+Desktop builds can usually perform a real one-click update. Web deployments
+usually cannot replace the running server from the browser, so the web UI should
+show version status and provide safe server-side update guidance instead.
 
-## cc-switch Reference
+## Core Principles
 
-Desktop:
+- Keep update checks user-initiated unless a background check is cheap and
+  delayed.
+- Never block first-screen loading on release or registry network requests.
+- Desktop auto-update must use signed artifacts.
+- Web UI must not execute arbitrary shell commands from the browser.
+- If the current runtime cannot be compared with the latest release precisely,
+  show an "unknown" state instead of claiming it is current.
+- Always provide a manual fallback link to the release page or deployment docs.
 
-- `src/lib/updater.ts` wraps `@tauri-apps/plugin-updater`, `getVersion`,
-  `check`, `downloadAndInstall`, and `@tauri-apps/plugin-process` relaunch.
-- `src/contexts/UpdateContext.tsx` performs a delayed startup check and stores
-  dismissed versions in `localStorage`.
-- `src/components/UpdateBadge.tsx` shows an available-update badge.
-- `src/components/settings/AboutSection.tsx` provides the manual update button.
-  Installed builds call `downloadAndInstall()` then relaunch; portable builds or
-  failures fall back to opening GitHub Releases.
-- `src-tauri/tauri.conf.json` enables `bundle.createUpdaterArtifacts` and points
-  updater endpoints at
-  `https://github.com/farion1231/cc-switch/releases/latest/download/latest.json`.
-- `src-tauri/Cargo.toml` includes `tauri-plugin-updater = "2"` and
-  `tauri-plugin-process = "2"`.
-- `src-tauri/capabilities/default.json` includes `updater:default` and
-  `process:allow-restart`.
-- `.github/workflows/release.yml` builds signed updater artifacts and uploads
-  `latest.json`.
+## Runtime Strategy
 
-Web:
+### Desktop
 
-- `cc-switch` is desktop-first and does not provide a comparable browser-side web
-  self-updater.
-- ACLIV web mode must therefore use a separate server deployment strategy, not
-  Tauri updater APIs.
+Desktop can use a native updater flow:
+
+1. Read the current app version.
+2. Check a signed update manifest from a release endpoint.
+3. If a newer version exists, keep the update handle in memory.
+4. On the second click, download and install the update.
+5. Relaunch the app after installation succeeds.
+
+Recommended state model:
+
+```text
+idle
+checking
+available
+updating
+restarting
+current
+unknown
+error
+```
+
+### Web Or Server Runtime
+
+Browser code should only request update information from the server. It should
+not directly run system commands.
+
+The server can expose:
+
+- Current server version.
+- Runtime type.
+- Platform and architecture.
+- Deployment channel.
+- Current image/tag or build ref, if available.
+- Latest release or latest image metadata.
+- A copyable update command or operational guidance.
+
+Container deployments can compare the running image metadata with the latest
+published image metadata. A common low-friction strategy is:
+
+1. Inject a build ref into the image at build time.
+2. Expose the current build ref through `/api/app/version`.
+3. Query the registry manifest for the latest image.
+4. Read the latest image config labels or env metadata.
+5. Compare current build ref with latest build ref.
+
+If either side lacks comparable metadata, return `updateAvailable: null` and
+show "latest status unknown" with manual update guidance.
 
 ## User Experience
 
-Add an update action in the app UI.
+Place the update action in an About, Settings, or compact utility area. Avoid
+making update UI part of the first-screen critical path.
 
-Desktop:
+Button labels:
 
-- Primary location: detail/header utility area or a small settings/about panel
-  if one exists when implementation starts.
-- Button label states:
-  - idle: `Check for updates` / `检查更新`
-  - checking: `Checking...` / `检查中...`
-  - available: `Update to v<version>` / `更新到 v<version>`
-  - downloading/installing: `Updating...` / `更新中...`
-  - up to date: success toast only
-  - error: error toast with fallback GitHub Release link
+- `Check for updates`
+- `Checking...`
+- `Update to v<version>`
+- `Updating...`
+- `Restarting...`
 
-Click behavior:
+Result behavior:
 
-1. If no update has been checked yet, click checks GitHub for the latest version.
-2. If no newer version exists, show `Already up to date`.
-3. If a newer version exists, keep the available update in memory and change the
-   button to `Update to v<version>`.
-4. Clicking the available-update button downloads and installs immediately.
-5. After install succeeds, relaunch the app automatically.
+- No update: show a success toast such as `Already up to date`.
+- Update available: keep the button visible and change it to an install action.
+- Unknown web comparison: show the latest check result and update guidance.
+- Check failure: show an error toast and fallback release link.
+- Install failure: keep the app usable and show a manual download link.
 
-Startup behavior:
+## Desktop Implementation
 
-- Do not auto-download or auto-install.
-- Optional: delayed background check may set a badge, but it must not block
-  first-screen loading.
-- The core required behavior is user-initiated: click button -> update latest.
+For a Tauri 2 desktop app, use the updater and process plugins.
 
-Failure behavior:
+Rust dependencies:
 
-- If check fails, show `Check update failed`.
-- If download/install fails, show `Update failed`.
-- Provide a fallback action/link to
-  `https://github.com/occva/acliv/releases/latest`.
-- The app must remain usable after failure.
+```toml
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+```
 
-Web:
+Frontend dependencies:
 
-- Show `Current version`, `Latest version`, and deployment channel.
-- `Check for updates` calls the GitHub Releases API or ACLIV's own latest
-  version endpoint.
-- If the server is outdated, show a copyable update command based on deployment
-  type:
-  - standalone binary: download latest web binary, replace service binary, restart
-    service.
-  - Docker/container: pull latest image and restart container.
-  - manual/unknown: open GitHub Releases.
-- Do not auto-run arbitrary shell commands from the browser in v1.
-- If a future server-side updater command is added, it must be opt-in, protected
-  by web auth, logged, and disabled by default unless the deployment explicitly
-  allows self-update.
+```json
+{
+  "@tauri-apps/plugin-updater": "^2",
+  "@tauri-apps/plugin-process": "^2"
+}
+```
 
-## Client Implementation
+Register plugins in the desktop builder:
 
-Desktop uses Tauri 2 plugins:
+```rust
+tauri::Builder::default()
+    .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_updater::Builder::new().build());
+```
 
-Use Tauri 2 plugins:
+Add permissions:
 
-- Rust: `tauri-plugin-updater = "2"`
-- Rust: `tauri-plugin-process = "2"`
-- Frontend: `@tauri-apps/plugin-updater`
+```json
+{
+  "permissions": [
+    "updater:default",
+    "process:allow-restart"
+  ]
+}
+```
 
-Register plugins in the desktop Tauri builder:
+Use a small frontend wrapper rather than spreading updater calls throughout the
+UI:
 
-- `tauri_plugin_process::init()`
-- `tauri_plugin_updater::Builder::new().build()`
+```ts
+export async function checkForUpdate() {
+  const { check } = await import('@tauri-apps/plugin-updater');
+  return await check({ timeout: 30000 });
+}
 
-Add capability permissions:
+export async function relaunchApp() {
+  const { relaunch } = await import('@tauri-apps/plugin-process');
+  await relaunch();
+}
+```
 
-- `updater:default`
-- `process:allow-restart`
+## Web API Shape
 
-Add `src/lib/updater.ts` with a thin wrapper around Tauri APIs:
+Suggested endpoints:
 
-- `getCurrentVersion(): Promise<string>`
-- `checkForUpdate(options?: { timeout?: number }): Promise<UpdateCheckResult>`
-- `installUpdate(update: UpdateHandle, onProgress?: ProgressHandler): Promise<void>`
-- `relaunchApp(): Promise<void>`
+```text
+GET /api/app/version
+GET /api/app/update-check
+```
 
-Use a small Svelte state store or component-local state:
+`/api/app/version` should return:
 
-- `phase`: `idle | checking | available | downloading | installing | restarting | upToDate | error`
-- `currentVersion`
-- `availableVersion`
-- `notes`
-- `updateHandle`
-- `error`
+```json
+{
+  "version": "1.2.3",
+  "runtime": "web",
+  "platform": "linux",
+  "arch": "x86_64",
+  "updateChannel": "container-image",
+  "image": "<registry>/<namespace>/<name>",
+  "imageTag": "latest",
+  "buildRef": "<git-sha-or-build-id>"
+}
+```
 
-Do not persist dismissed versions for the first implementation. Keep v1 simple:
-the button always lets the user check again.
+`/api/app/update-check` should return:
 
-Web uses normal HTTP APIs:
+```json
+{
+  "runtime": "web",
+  "updateChannel": "container-image",
+  "currentVersion": "1.2.3",
+  "currentTag": "latest",
+  "currentBuildRef": "<git-sha-or-build-id>",
+  "latestTag": "latest",
+  "latestDigest": "<registry-digest>",
+  "latestBuildRef": "<git-sha-or-build-id>",
+  "updateAvailable": true,
+  "releaseUrl": "https://example.com/releases/latest",
+  "updateCommand": "docker pull <image>:latest && docker compose up -d"
+}
+```
 
-- Add `GET /api/app/version` returning current server version, runtime mode, OS,
-  arch, and deployment type if known.
-- Add `GET /api/app/latest-release` returning latest version, release URL, and
-  update commands if the server can infer them.
-- Frontend hides desktop install/relaunch actions in web mode and renders
-  server-update guidance instead.
-- GitHub requests should be timeout-bounded and non-blocking for first-screen
-  load.
+Use `null` for `updateAvailable` when comparison is not reliable.
 
-## Required Tauri Config
-
-Desktop only.
+## Tauri Config
 
 Enable updater artifacts:
 
@@ -173,45 +217,40 @@ Configure updater endpoint:
     "updater": {
       "pubkey": "<TAURI_UPDATER_PUBLIC_KEY>",
       "endpoints": [
-        "https://github.com/occva/acliv/releases/latest/download/latest.json"
+        "https://<host>/<owner>/<repo>/releases/latest/download/latest.json"
       ]
     }
   }
 }
 ```
 
-The public key is committed in config. The private key is only stored in GitHub
-Actions secrets.
+Commit the public key. Store the private signing key only in local secrets or CI
+secrets.
 
 ## Update Manifest
 
-Desktop only.
+Desktop updater manifests should be generated after all platform artifacts and
+signatures have been uploaded.
 
-The button uses Tauri updater, so GitHub Release must provide:
-
-```text
-latest.json
-```
-
-Minimum manifest shape:
+Minimum shape:
 
 ```json
 {
-  "version": "1.0.13",
-  "notes": "Release v1.0.13",
-  "pub_date": "2026-05-28T00:00:00Z",
+  "version": "1.2.3",
+  "notes": "Release v1.2.3",
+  "pub_date": "2026-01-01T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "<signature>",
-      "url": "https://github.com/occva/acliv/releases/download/v1.0.13/acliv-v1.0.13-x64-en-us.msi"
+      "url": "https://<host>/download/app-v1.2.3-x64.msi"
     },
     "darwin-x86_64": {
       "signature": "<signature>",
-      "url": "https://github.com/occva/acliv/releases/download/v1.0.13/acliv-v1.0.13-macos-x64.tar.gz"
+      "url": "https://<host>/download/app-v1.2.3-macos-x64.tar.gz"
     },
     "darwin-aarch64": {
       "signature": "<signature>",
-      "url": "https://github.com/occva/acliv/releases/download/v1.0.13/acliv-v1.0.13-macos-arm64.tar.gz"
+      "url": "https://<host>/download/app-v1.2.3-macos-arm64.tar.gz"
     }
   }
 }
@@ -219,78 +258,76 @@ Minimum manifest shape:
 
 Artifact rules:
 
-- Windows updater artifact: MSI + `.sig`.
-- macOS updater artifact: Tauri updater `.tar.gz` + `.sig`.
-- DMG remains a manual installer and is not used by the update button.
-- Portable exe is not used by the update button.
+- Windows updater artifact: MSI plus `.sig`.
+- macOS updater artifact: updater `.tar.gz` plus `.sig`.
+- DMG can remain a manual installer and does not need to be used by the update
+  button.
+- Portable executables should be treated as manual downloads unless explicitly
+  supported by the updater.
 
-## Release Workflow Support
+## Release Workflow
 
-The existing release workflow must be extended so the in-app button has valid
-data to consume.
+Desktop release jobs should:
 
-Desktop:
+1. Sync version files from the release tag.
+2. Build signed updater artifacts.
+3. Fail if any required artifact or `.sig` file is missing.
+4. Upload all platform artifacts to the same release.
+5. Generate the update manifest after all platform jobs finish.
+6. Upload the manifest to the release.
 
-- Build Tauri updater artifacts with signatures.
-- Upload updater artifacts and `.sig` files to the same GitHub Release.
-- Generate and upload `latest.json` after all platform assets are present.
-- Fail CI if required updater artifacts or signatures are missing.
+Recommended CI secrets:
 
-Secrets:
+```text
+TAURI_SIGNING_PRIVATE_KEY
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
 
-- `TAURI_SIGNING_PRIVATE_KEY`
-- optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+Container release jobs should:
 
-Release notes rule remains unchanged:
+1. Build the server image.
+2. Inject image tag and build ref as build args or labels.
+3. Publish immutable version tags.
+4. Optionally publish `latest`.
+5. Ensure the running server exposes enough metadata for comparison.
 
-- `docs/releases/v<version>.md` is the source of release notes.
-- Scripts must not generate the `## Changes` section.
-
-Web:
-
-- Publish the `acliv-web` binary or image for the same release version.
-- Include checksums for downloadable binaries.
-- Document the supported update command per deployment target.
-- The web update panel should link to the exact release used for the latest
-  version.
+For manual backfill releases, checkout the requested tag before building. This
+prevents publishing an old version tag with new source code.
 
 ## Acceptance Criteria
 
-Windows:
+Desktop:
 
-- Install version N via MSI.
-- Publish version N+1 with valid `latest.json`.
-- Click the in-app update button.
-- App checks, downloads, installs, relaunches, and reports N+1.
+- Version N is installed locally.
+- Version N+1 is published with a valid manifest.
+- The update button detects N+1.
+- The second click downloads, installs, and relaunches.
+- The app reports version N+1 after relaunch.
 
-macOS:
+Web or server runtime:
 
-- Install version N.
-- Publish version N+1 with matching darwin platform entry.
-- Click the in-app update button.
-- App checks, downloads, installs, relaunches, and reports N+1.
-
-Web:
-
-- Web mode shows current server version and latest release version.
-- Checking latest release does not block first-screen loading.
-- Outdated web server shows copyable update guidance and release link.
-- Browser UI does not call desktop Tauri updater APIs.
+- The UI shows current runtime version and deployment channel.
+- Update checks do not block first-screen loading.
+- Outdated deployments show copyable operational guidance.
+- Unknown comparison state is shown honestly.
+- Browser code does not call desktop updater APIs.
 
 Failure cases:
 
-- Missing network: check fails with toast, app remains usable.
-- Missing `latest.json`: check fails with toast, fallback GitHub Release link is available.
-- Missing signature or wrong signature: install fails safely.
+- Network failure shows an error without breaking the app.
+- Missing manifest shows an error and fallback release link.
+- Missing or invalid signature prevents installation.
+- Missing registry metadata returns unknown status, not false "current" status.
 
 ## Implementation Order
 
-1. Add updater/process dependencies and Tauri permissions for desktop.
-2. Add updater config with public key and GitHub `latest.json` endpoint.
-3. Add frontend updater wrapper.
-4. Add the desktop update button and status toasts.
-5. Add web version/latest-release endpoints and web-mode update panel.
-6. Extend release workflow to publish signed desktop updater artifacts,
-   `latest.json`, and web server artifacts.
-7. Verify desktop with an old installed version updating to the next release.
-8. Verify web with an older server binary/image showing latest release guidance.
+1. Add desktop updater dependencies and permissions.
+2. Add updater config with public key and manifest endpoint.
+3. Add a small frontend updater wrapper.
+4. Add update button state and toasts.
+5. Add server version and update-check endpoints.
+6. Add web/runtime update guidance UI.
+7. Extend release workflow to publish signed desktop updater artifacts.
+8. Generate the update manifest only after all platform artifacts exist.
+9. Add container metadata if web/server deployments need comparison.
+10. Verify both a successful desktop update and all failure states.
