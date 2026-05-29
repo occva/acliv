@@ -3,6 +3,7 @@
 node_modules
 release
 src-tauri/target
+src-tauri/web/target
 dist
 dev_error.log
 src-tauri/build_error.log

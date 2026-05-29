@@ -30,16 +30,14 @@ ENV CARGO_NET_RETRY=8 \
     CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
 COPY src-tauri/web/Cargo.toml src-tauri/web/Cargo.lock ./src-tauri/web/
-RUN mkdir -p /app/src-tauri/web/src \
-    && printf 'fn main() {}\n' > /app/src-tauri/web/src/main.rs
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    sh -ec 'cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml'
+    cargo fetch --locked --manifest-path src-tauri/web/Cargo.toml
 
 COPY src-tauri ./src-tauri
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    sh -ec 'cargo clean --manifest-path src-tauri/web/Cargo.toml --package acliv-web && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml'
+    sh -ec 'rm -rf src-tauri/web/target && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml && test "$(wc -c < src-tauri/web/target/release/acliv-web)" -gt 1000000 && grep -q "ACLIV (Web)" src-tauri/web/target/release/acliv-web'
 
 FROM ${RUNTIME_IMAGE}
 WORKDIR /app
@@ -52,7 +50,9 @@ COPY --from=frontend-builder --chown=app:app /app/dist /app/dist
 COPY --from=backend-builder --chown=app:app /app/src-tauri/web/target/release/acliv-web /app/acliv-web
 COPY --chown=app:app deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN chmod +x /app/docker-entrypoint.sh \
+RUN test "$(wc -c < /app/acliv-web)" -gt 1000000 \
+    && grep -q "ACLIV (Web)" /app/acliv-web \
+    && chmod +x /app/docker-entrypoint.sh \
     && mkdir -p /app/data
 
 ENV ACLIV_HOST=0.0.0.0
