@@ -100,36 +100,8 @@ function Ensure-NsisOnPath {
   }
 }
 
-function Test-TauriSigningKeyEncrypted {
-  param(
-    [string]$Key
-  )
-
-  if (-not $Key) {
-    return $false
-  }
-  if ($Key -match 'encrypted secret key') {
-    return $true
-  }
-
-  $normalizedKey = ($Key.Trim() -replace '\s+', '')
-  try {
-    $decodedKey = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($normalizedKey))
-    return $decodedKey -match 'encrypted secret key'
-  } catch {
-    return $false
-  }
-}
-
-function Assert-TauriSigningPassword {
-  if ((Test-TauriSigningKeyEncrypted -Key $env:TAURI_SIGNING_PRIVATE_KEY) -and -not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
-    throw 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for encrypted Tauri updater signing keys.'
-  }
-}
-
 function Ensure-TauriSigningKey {
   if ($env:TAURI_SIGNING_PRIVATE_KEY) {
-    Assert-TauriSigningPassword
     return
   }
 
@@ -142,7 +114,6 @@ function Ensure-TauriSigningKey {
       throw "Tauri updater signing key path not found: $env:TAURI_SIGNING_PRIVATE_KEY_PATH"
     }
     $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $env:TAURI_SIGNING_PRIVATE_KEY_PATH -Raw
-    Assert-TauriSigningPassword
     Write-Host "Using local Tauri updater signing key: $env:TAURI_SIGNING_PRIVATE_KEY_PATH" -ForegroundColor Yellow
     return
   }
@@ -150,7 +121,6 @@ function Ensure-TauriSigningKey {
   $localKey = Join-Path $HOME '.acliv\tauri-updater.key'
   if (Test-Path -LiteralPath $localKey) {
     $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $localKey -Raw
-    Assert-TauriSigningPassword
     Write-Host "Using local Tauri updater signing key: $localKey" -ForegroundColor Yellow
     return
   }

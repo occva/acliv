@@ -61,9 +61,6 @@ jobs:
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
             throw 'TAURI_SIGNING_PRIVATE_KEY secret is required for updater artifacts.'
           }
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
-            throw 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD secret is required for encrypted updater signing keys.'
-          }
 
       - name: Build release artifacts
         shell: pwsh
@@ -153,10 +150,6 @@ jobs:
           set -euo pipefail
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY secret is required for updater artifacts." >&2
-            exit 1
-          fi
-          if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD secret is required for encrypted updater signing keys." >&2
             exit 1
           fi
 
