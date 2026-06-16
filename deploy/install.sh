@@ -90,7 +90,8 @@ has_session_data() {
     || [[ -d "$home_dir/.claude/projects" ]] \
     || [[ -d "$home_dir/.gemini/tmp" ]] \
     || [[ -d "$home_dir/.openclaw/agents" ]] \
-    || [[ -d "$home_dir/.config/opencode/storage/session" ]]
+    || [[ -d "$home_dir/.config/opencode/storage/session" ]] \
+    || [[ -d "$home_dir/.pi/agent/sessions" ]]
 }
 
 resolve_host_home_default() {
@@ -215,12 +216,13 @@ prepare_env() {
   fi
   set_env_value "HOST_HOME" "$host_home"
 
-  local claude_dir codex_dir gemini_dir openclaw_dir opencode_dir
+  local claude_dir codex_dir gemini_dir openclaw_dir opencode_dir pi_dir
   claude_dir="$(get_env_value CLAUDE_DIR)"
   codex_dir="$(get_env_value CODEX_DIR)"
   gemini_dir="$(get_env_value GEMINI_DIR)"
   openclaw_dir="$(get_env_value OPENCLAW_DIR)"
   opencode_dir="$(get_env_value OPENCODE_DIR)"
+  pi_dir="$(get_env_value PI_DIR)"
 
   if [[ -z "$claude_dir" ]]; then
     claude_dir="$(provider_dir_or_empty "$host_home/.claude")"
@@ -242,12 +244,16 @@ prepare_env() {
     opencode_dir="$(provider_dir_or_empty "$host_home/.config/opencode")"
     set_env_value "OPENCODE_DIR" "$opencode_dir"
   fi
+  if [[ -z "$pi_dir" ]]; then
+    pi_dir="$(provider_dir_or_empty "$host_home/.pi")"
+    set_env_value "PI_DIR" "$pi_dir"
+  fi
 
   local run_as_root
   run_as_root="$(get_env_value ACLIV_RUN_AS_ROOT)"
   if [[ -z "$run_as_root" ]]; then
     run_as_root="0"
-    for path in "$claude_dir" "$codex_dir" "$gemini_dir" "$openclaw_dir" "$opencode_dir"; do
+    for path in "$claude_dir" "$codex_dir" "$gemini_dir" "$openclaw_dir" "$opencode_dir" "$pi_dir"; do
       if [[ -n "$path" && "$path" == /root/* ]]; then
         run_as_root="1"
         log_info "Detected root-owned provider directory $path, enabling ACLIV_RUN_AS_ROOT=1."
@@ -265,7 +271,7 @@ prepare_env() {
   fi
 
   chmod 600 .env
-  mkdir -p app_data empty/claude empty/codex empty/gemini empty/openclaw empty/opencode
+  mkdir -p app_data empty/claude empty/codex empty/gemini empty/openclaw empty/opencode empty/pi
 }
 
 compose_up_image() {

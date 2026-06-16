@@ -70,7 +70,8 @@ for provider in \
   "Codex:${ACLIV_CODEX_DIR:-}" \
   "Gemini:${ACLIV_GEMINI_DIR:-}" \
   "OpenClaw:${ACLIV_OPENCLAW_DIR:-}" \
-  "OpenCode:${ACLIV_OPENCODE_DIR:-}"
+  "OpenCode:${ACLIV_OPENCODE_DIR:-}" \
+  "Pi:${ACLIV_PI_DIR:-}"
 do
   label="${provider%%:*}"
   path="${provider#*:}"

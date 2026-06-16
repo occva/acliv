@@ -20,6 +20,7 @@ services:
       - ACLIV_GEMINI_DIR=/host-data/gemini/tmp
       - ACLIV_OPENCLAW_DIR=/host-data/openclaw/agents
       - ACLIV_OPENCODE_DIR=/host-data/opencode/storage
+      - ACLIV_PI_DIR=/host-data/pi/agent/sessions
       - ACLIV_RUN_AS_ROOT=${ACLIV_RUN_AS_ROOT:-0}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
@@ -29,6 +30,7 @@ services:
       - ${GEMINI_DIR:-./empty/gemini}:/host-data/gemini:ro
       - ${OPENCLAW_DIR:-./empty/openclaw}:/host-data/openclaw:ro
       - ${OPENCODE_DIR:-./empty/opencode}:/host-data/opencode:ro
+      - ${PI_DIR:-./empty/pi}:/host-data/pi:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:17860/api/health"]
       interval: 30s

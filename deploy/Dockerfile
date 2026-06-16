@@ -70,6 +70,7 @@ ENV ACLIV_CODEX_DIR=/host-data/codex/sessions
 ENV ACLIV_GEMINI_DIR=/host-data/gemini/tmp
 ENV ACLIV_OPENCLAW_DIR=/host-data/openclaw/agents
 ENV ACLIV_OPENCODE_DIR=/host-data/opencode/storage
+ENV ACLIV_PI_DIR=/host-data/pi/agent/sessions
 ENV ACLIV_RUN_AS_ROOT=0
 
 EXPOSE 17860
