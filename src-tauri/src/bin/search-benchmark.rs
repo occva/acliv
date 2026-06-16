@@ -39,10 +39,7 @@ fn run() -> Result<(), String> {
         ));
     }
 
-    let output_path = args
-        .output_path
-        .clone()
-        .unwrap_or_else(default_output_path);
+    let output_path = args.output_path.clone().unwrap_or_else(default_output_path);
     let queries = resolve_queries(&args, &status.db_path)?;
     if queries.is_empty() {
         return Err("No benchmark queries available. Provide --query or ensure the index has searchable messages.".to_string());
@@ -72,16 +69,27 @@ fn run() -> Result<(), String> {
     };
 
     if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create benchmark log dir {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create benchmark log dir {}: {e}",
+                parent.display()
+            )
+        })?;
     }
 
     let serialized = serde_json::to_string_pretty(&benchmark_log)
         .map_err(|e| format!("Failed to serialize benchmark log: {e}"))?;
-    fs::write(&output_path, serialized)
-        .map_err(|e| format!("Failed to write benchmark log {}: {e}", output_path.display()))?;
+    fs::write(&output_path, serialized).map_err(|e| {
+        format!(
+            "Failed to write benchmark log {}: {e}",
+            output_path.display()
+        )
+    })?;
 
-    println!("Search benchmark baseline written to {}", output_path.display());
+    println!(
+        "Search benchmark baseline written to {}",
+        output_path.display()
+    );
     println!(
         "Indexed sessions: {}, indexed messages: {}, db size: {} bytes",
         benchmark_log.index_status.sessions_count,
@@ -253,8 +261,7 @@ fn sample_queries(db_path: &str) -> Result<Vec<QueryDefinition>, String> {
 
     let ascii_token_re =
         Regex::new(r"[A-Za-z][A-Za-z0-9_]{5,31}").map_err(|e| format!("ASCII regex error: {e}"))?;
-    let cjk_phrase_re =
-        Regex::new(r"\p{Han}{2,8}").map_err(|e| format!("CJK regex error: {e}"))?;
+    let cjk_phrase_re = Regex::new(r"\p{Han}{2,8}").map_err(|e| format!("CJK regex error: {e}"))?;
 
     let mut english_hit: Option<QueryDefinition> = None;
     let mut cjk_hit: Option<QueryDefinition> = None;
@@ -295,7 +302,10 @@ fn sample_queries(db_path: &str) -> Result<Vec<QueryDefinition>, String> {
     queries.push(QueryDefinition {
         label: "english-miss".to_string(),
         source: "synthetic-miss".to_string(),
-        query: format!("ACLIV_BENCH_MISS_TOKEN_{}", Local::now().format("%Y%m%d%H%M%S")),
+        query: format!(
+            "ACLIV_BENCH_MISS_TOKEN_{}",
+            Local::now().format("%Y%m%d%H%M%S")
+        ),
     });
     queries.push(QueryDefinition {
         label: "cjk-miss".to_string(),
@@ -339,7 +349,10 @@ fn pick_cjk_phrase(content: &str, pattern: &Regex) -> Option<String> {
     Some(chars.into_iter().take(target_len).collect())
 }
 
-fn benchmark_query(query: &QueryDefinition, args: &BenchmarkArgs) -> Result<QueryBenchmark, String> {
+fn benchmark_query(
+    query: &QueryDefinition,
+    args: &BenchmarkArgs,
+) -> Result<QueryBenchmark, String> {
     for _ in 0..args.warmup_iterations {
         let _ = search_index::search_content(
             &query.query,
@@ -560,8 +573,12 @@ fn print_help() {
     println!("  --query <label=query>   Add a custom benchmark query; may be repeated");
     println!("  --warmup <n>            Warmup iterations per query (default: {DEFAULT_WARMUP_ITERATIONS})");
     println!("  --iterations <n>        Measured iterations per query (default: {DEFAULT_MEASURED_ITERATIONS})");
-    println!("  --limit <n>             Search result limit per query (default: {DEFAULT_RESULT_LIMIT})");
-    println!("  --sort-by <mode>        Search sort mode: relevance or recent (default: relevance)");
+    println!(
+        "  --limit <n>             Search result limit per query (default: {DEFAULT_RESULT_LIMIT})"
+    );
+    println!(
+        "  --sort-by <mode>        Search sort mode: relevance or recent (default: relevance)"
+    );
 }
 
 #[derive(Debug, Clone)]
