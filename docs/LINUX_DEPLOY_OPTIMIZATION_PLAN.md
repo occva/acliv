@@ -70,6 +70,7 @@ compose 使用以下宿主机路径变量：
 - `GEMINI_DIR`
 - `OPENCLAW_DIR`
 - `OPENCODE_DIR`
+- `PI_DIR`
 
 容器内部统一映射到：
 
@@ -78,6 +79,7 @@ compose 使用以下宿主机路径变量：
 - `/host-data/gemini`
 - `/host-data/openclaw`
 - `/host-data/opencode`
+- `/host-data/pi`
 
 后端读取的环境变量为：
 
@@ -86,6 +88,7 @@ compose 使用以下宿主机路径变量：
 - `ACLIV_GEMINI_DIR=/host-data/gemini/tmp`
 - `ACLIV_OPENCLAW_DIR=/host-data/openclaw/agents`
 - `ACLIV_OPENCODE_DIR=/host-data/opencode/storage`
+- `ACLIV_PI_DIR=/host-data/pi/agent/sessions`
 
 ### 3.3 权限诊断
 
@@ -180,6 +183,7 @@ CODEX_DIR=
 GEMINI_DIR=
 OPENCLAW_DIR=
 OPENCODE_DIR=
+PI_DIR=
 ```
 
 说明：
@@ -198,6 +202,7 @@ CODEX_DIR=/root/.codex
 GEMINI_DIR=/root/.gemini
 OPENCLAW_DIR=/root/.openclaw
 OPENCODE_DIR=/root/.config/opencode
+PI_DIR=/root/.pi
 ```
 
 ## 8. 开发与生产边界

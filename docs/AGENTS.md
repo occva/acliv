@@ -9,7 +9,7 @@ This project is a Tauri desktop app with a Svelte frontend and a Rust backend.
 - `lib.rs` registers Tauri commands and plugins.
 - `cmd.rs` contains `#[tauri::command]` entry points.
 - `paths.rs` resolves provider data paths.
-- `session_manager/` contains provider adapters (`claude`, `codex`, `gemini`, `openclaw`, `opencode`).
+- `session_manager/` contains provider adapters (`claude`, `codex`, `gemini`, `openclaw`, `opencode`, `pi`).
 - `docs/`: architecture and migration notes.
 
 ## Build, Test, and Development Commands

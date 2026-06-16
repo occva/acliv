@@ -4,7 +4,7 @@
 
 功能
 
-- 支持多 Provider：`claude`、`codex`、`gemini`、`openclaw`、`opencode`
+- 支持多 Provider：`claude`、`codex`、`gemini`、`openclaw`、`opencode`、`pi`
 - 会话列表统一扫描，按最近活跃时间排序
 - 点击会话按需加载消息详情
 - 支持暗色/亮色主题切换
@@ -124,7 +124,7 @@ ACLIV_WEB_AUTH_ENABLED=0
 │   ├── web/                      # Web server 独立 Cargo manifest
 │   │   ├── session_manager/      # 统一 provider 扫描与消息读取
 │   │   │   ├── mod.rs
-│   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode
+│   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode/pi
 │   │   └── search_index/         # SQLite 全文索引、查询与状态管理
 │   │       ├── mod.rs
 │   │       ├── indexer.rs
