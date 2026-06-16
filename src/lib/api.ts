@@ -54,7 +54,7 @@ export interface AppUpdateCheckInfo {
 
 /** 会话元信息（来自 Rust SessionMeta） */
 export interface SessionMeta {
-    providerId: string;       // 'claude' | 'codex' | 'gemini' | 'openclaw' | 'opencode'
+    providerId: string;       // 'claude' | 'codex' | 'gemini' | 'openclaw' | 'opencode' | 'pi'
     sessionId: string;
     title?: string;           // 提取自第一条用户消息
     summary?: string;         // 截断后的摘要
@@ -69,6 +69,8 @@ export interface SessionMeta {
 
 /** 会话消息 */
 export interface SessionMessage {
+    msgUuid?: string;
+    parentUuid?: string;
     role: string;    // 'user' | 'assistant' | 'tool' | 'system'
     kind?: string;
     name?: string;
@@ -133,6 +135,12 @@ export interface RefreshSearchIndexResult {
     errorSessions: number;
     indexedSessions: number;
     indexedMessages: number;
+}
+
+export interface SearchIndexChangeStatus {
+    changed: boolean;
+    indexedSourceMtime?: number | null;
+    latestSourceMtime?: number | null;
 }
 
 export interface IndexedSourceRef {
@@ -265,6 +273,7 @@ interface BackendAdapter {
     rebuildSearchIndex: () => Promise<RebuildSearchIndexResult>;
     refreshSearchIndex: () => Promise<RefreshSearchIndexResult>;
     getSearchIndexStatus: () => Promise<SearchIndexStatus>;
+    hasSearchIndexChanges: () => Promise<SearchIndexChangeStatus>;
     deleteSession: (options: DeleteSessionOptions) => Promise<boolean>;
     getAppVersion: () => Promise<AppVersionInfo>;
     getLatestRelease: () => Promise<LatestReleaseInfo>;
@@ -458,6 +467,7 @@ const tauriAdapter: BackendAdapter = {
     rebuildSearchIndex: () => invoke('rebuild_search_index'),
     refreshSearchIndex: () => invoke('refresh_search_index'),
     getSearchIndexStatus: () => invoke('get_search_index_status'),
+    hasSearchIndexChanges: () => invoke('has_search_index_changes'),
     deleteSession: ({ providerId, sessionId, sourcePath }) =>
         invoke('delete_session', { providerId, sessionId, sourcePath }),
     getAppVersion: () => invoke('get_app_version'),
@@ -546,6 +556,8 @@ const webAdapter: BackendAdapter = {
         }),
     getSearchIndexStatus: () =>
         fetchApi('/api/search/index/status', { method: 'GET' }),
+    hasSearchIndexChanges: () =>
+        fetchApi('/api/search/index/changes', { method: 'GET' }),
     deleteSession: ({ providerId, sessionId, sourcePath }) =>
         fetchApi('/api/session/delete', {
             method: 'POST',
@@ -657,6 +669,10 @@ export async function refreshSearchIndex(): Promise<RefreshSearchIndexResult> {
 
 export async function getSearchIndexStatus(): Promise<SearchIndexStatus> {
     return getAdapter().getSearchIndexStatus();
+}
+
+export async function hasSearchIndexChanges(): Promise<SearchIndexChangeStatus> {
+    return getAdapter().hasSearchIndexChanges();
 }
 
 /** 删除指定会话及 provider 关联资源 */

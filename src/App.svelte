@@ -71,6 +71,8 @@
       messages: ConversationMessageView[];
   }
   interface ConversationMessage {
+      msgUuid?: string;
+      parentUuid?: string;
       role: string;
       kind?: string;
       name?: string;
@@ -141,7 +143,7 @@
       top: number;
   }
   const INDEX_LIBRARY_PAGE_SIZE = 50;
-  const AUTO_SYNC_INTERVAL_WEB_MS = 120000;
+  const AUTO_SYNC_INTERVAL_WEB_MS = 300000;
   const AUTO_SYNC_INTERVAL_DESKTOP_MS = 300000;
   const DETAIL_SCROLL_STORAGE_PREFIX = 'acliv:detail-scroll:';
   const DETAIL_SCROLL_BOTTOM_THRESHOLD = 40;
@@ -203,6 +205,7 @@
     openclaw: 'OpenClaw Sessions',
     opencode: 'OpenCode Sessions',
     claude: 'Claude Sessions',
+    pi: 'Pi Sessions',
   };
 
   function formatTimestamp(ms?: number): string {
@@ -270,23 +273,6 @@
     };
   }
 
-  // SessionMeta[] → ProjectInfo[]（按 source 过滤 + 按 projectDir 分组）
-  function buildProjects(sessions: SessionMeta[], source: string): ProjectInfo[] {
-    const map = new Map<string, { count: number; latest: number }>();
-    sessions
-      .filter(s => s.providerId === source)
-      .forEach(s => {
-        const dir = sessionDir(s);
-        const e = map.get(dir) ?? { count: 0, latest: 0 };
-        e.count++;
-        if (s.lastActiveAt && s.lastActiveAt > e.latest) e.latest = s.lastActiveAt;
-        map.set(dir, e);
-      });
-    return [...map.entries()].map(([name, { count, latest }]) => ({
-      name, conversation_count: count, latest_date: formatTimestamp(latest),
-    })).sort((a,b) => b.conversation_count - a.conversation_count);
-  }
-
   // SessionMeta[] → ConvSummary[]（按 source + projectDir 过滤）
   function buildConversations(sessions: SessionMeta[], source: string, project: string): ConvSummary[] {
     return sessions
@@ -302,15 +288,49 @@
 
   // 从 allSessions 重新计算 projects / stats（切换 source 或刷新后调用）
   function refreshFromSessions() {
-    const projs = buildProjects(allSessions, currentSource);
+    const projectMap = new Map<string, { count: number; latest: number }>();
+    let sourceConversationCount = 0;
+    let sourceMessageCount = 0;
+    const nextConversations: ConvSummary[] = [];
+
+    for (const session of allSessions) {
+      if (session.providerId !== currentSource) continue;
+
+      sourceConversationCount++;
+      const messageCount = sessionMessageCount(session);
+      sourceMessageCount += messageCount;
+
+      const dir = sessionDir(session);
+      const project = projectMap.get(dir) ?? { count: 0, latest: 0 };
+      project.count++;
+      const displayAt = session.lastActiveAt ?? session.createdAt;
+      const sortAt = displayAt ?? 0;
+      if (sortAt > project.latest) project.latest = sortAt;
+      projectMap.set(dir, project);
+
+      if (currentProject && dir === currentProject) {
+        nextConversations.push({
+          session_id: session.sessionId,
+          project_path: session.projectDir ?? '',
+          source_type: session.providerId,
+          title: sessionTitle(session),
+          timestamp: formatTimestamp(displayAt),
+          message_count: messageCount,
+          date: formatTimestamp(displayAt),
+        });
+      }
+    }
+
+    const projs = [...projectMap.entries()].map(([name, { count, latest }]) => ({
+      name,
+      conversation_count: count,
+      latest_date: formatTimestamp(latest),
+    })).sort((a,b) => b.conversation_count - a.conversation_count);
     projects = projs;
     stats = {
       projects_count: projs.length,
-      conversations_count: allSessions.filter(s =>
-        s.providerId === currentSource).length,
-      messages_count: allSessions
-        .filter(s => s.providerId === currentSource)
-        .reduce((sum, s) => sum + sessionMessageCount(s), 0),
+      conversations_count: sourceConversationCount,
+      messages_count: sourceMessageCount,
     };
 
     const currentProjectStillExists =
@@ -324,7 +344,9 @@
     if (!currentProject && projs.length > 0) selectProject(projs[0].name, false);
 
     conversations = currentProject
-      ? buildConversations(allSessions, currentSource, currentProject)
+      ? (nextConversations.length > 0
+          ? nextConversations
+          : buildConversations(allSessions, currentSource, currentProject))
       : [];
   }
 
@@ -340,7 +362,7 @@
   let conversations = $state<ConvSummary[]>([]);
   let currentConversation = $state<any>(null);
   let stats = $state<Stats>({ projects_count: 0, conversations_count: 0, messages_count: 0 });
-  const sources = ['claude', 'codex', 'gemini', 'openclaw', 'opencode'];
+  const sources = ['claude', 'codex', 'gemini', 'openclaw', 'opencode', 'pi'];
   let currentSource = $state(getStoredSource() ?? sources[0]);
 
   // UI State
@@ -882,6 +904,11 @@
       ).values(),
     );
     if (uniqueSources.length === 0) return false;
+    if (uniqueSources.some(source => !source.sourcePath.toLowerCase().endsWith('.jsonl'))) {
+      const sessions = await loadSessionInventory(searchIndexReady);
+      applyLoadedSessions(sessions);
+      return true;
+    }
 
     const grouped = new Map<string, string[]>();
     for (const source of uniqueSources) {
@@ -1322,36 +1349,45 @@
   }
   async function silentRefresh() {
       if (isWebMode && !isAuthenticated) return;
-      if (isLoading || isRefreshing) return;
+      if (isLoading || isRefreshing || isIndexActionRunning || searchIndexBootstrapping) return;
       isRefreshing = true;
-      toastType = 'syncing';
-      toastMessage = keyMessage('toast.syncing_history');
-      showToast = true;
+      if (!isWebMode) {
+          toastType = 'syncing';
+          toastMessage = keyMessage('toast.syncing_history');
+          showToast = true;
+      }
       
       try {
+          let shouldReloadSessions = !searchIndexReady;
           if (searchIndexReady) {
               try {
+                  const changes = await api.hasSearchIndexChanges();
+                  if (!changes.changed) {
+                      return;
+                  }
                   const result = await api.refreshSearchIndex();
                   searchIndexReady = result.indexedSessions > 0;
+                  shouldReloadSessions = true;
               } catch (indexError) {
                   console.error('Search index refresh failed:', indexError);
-                  searchIndexReady = false;
+                  if (!isWebMode) {
+                      searchIndexReady = false;
+                      shouldReloadSessions = true;
+                  }
               }
           }
+          if (!shouldReloadSessions) return;
           await refreshSearchIndexStatus();
           const sessions = await loadSessionInventory(searchIndexReady);
           applyLoadedSessions(sessions);
           if (currentProject) scheduleMessageCountWarmup(currentProject);
-          showToast = false;
-          isRefreshing = false;
       } catch(e) { 
           if (handleWebUnauthorized(e)) {
-              showToast = false;
-              isRefreshing = false;
               return;
           }
           console.error("Silent refresh failed:", e); 
-          showToast = false;
+      } finally {
+          if (!isWebMode) showToast = false;
           isRefreshing = false;
       }
   }
@@ -1939,6 +1975,8 @@
       if (!target.sourcePath) return [];
       const raw = await api.getSessionMessages(target.providerId, target.sourcePath);
       return raw.map((msg, index) => ({
+          msgUuid: msg.msgUuid,
+          parentUuid: msg.parentUuid,
           role: msg.role,
           kind: msg.kind,
           name: msg.name,
@@ -2201,25 +2239,25 @@
   }
 
   async function bootstrapSearchIndex() {
-      if (isWebMode) return;
       if (searchIndexBootstrapping) return;
       searchIndexBootstrapping = true;
       try {
           const status = await api.getSearchIndexStatus();
           searchIndexReady = status.ready && status.sessionsCount > 0;
-          if (allSessions.length > 0) {
-              if (searchIndexReady) {
+          if (searchIndexReady) {
+              const changes = await api.hasSearchIndexChanges();
+              if (changes.changed) {
                   const result = await api.refreshSearchIndex();
                   searchIndexReady = result.indexedSessions > 0;
-              } else {
-                  const result = await api.rebuildSearchIndex();
-                  searchIndexReady = result.indexedSessions > 0;
               }
-              if (searchIndexReady) {
-                  await refreshSearchIndexStatus();
-                  const sessions = await loadSessionInventory(true);
-                  applyLoadedSessions(sessions);
-              }
+          } else {
+              const result = await api.rebuildSearchIndex();
+              searchIndexReady = result.indexedSessions > 0;
+          }
+          if (searchIndexReady) {
+              await refreshSearchIndexStatus();
+              const sessions = await loadSessionInventory(true);
+              applyLoadedSessions(sessions);
           }
       } catch (e) {
           console.error('Search index bootstrap failed:', e);
@@ -2632,6 +2670,7 @@
           gemini: 'Gemini CLI',
           openclaw: 'OpenClaw',
           opencode: 'OpenCode',
+          pi: 'Pi',
       } as Record<string, string>)[providerId] ?? providerId;
   }
 
@@ -2733,7 +2772,8 @@
       'codex': 'Codex CLI',
       'gemini': 'Gemini CLI',
       'openclaw': 'OpenClaw',
-      'opencode': 'OpenCode'
+      'opencode': 'OpenCode',
+      'pi': 'Pi'
   } as Record<string, string>)[currentSource] || t('common.history'));
   const selectedSession = $derived(
       currentConversation
@@ -2828,7 +2868,7 @@
         <div class="source-dropdown" class:show={isSourceDropdownOpen}>
             {#each sources as src}
                 <button class="source-item" class:selected={currentSource === src} onclick={() => selectSource(src)} type="button">
-                    {src === 'claude' ? 'Claude CLI' : src === 'codex' ? 'Codex CLI' : src === 'gemini' ? 'Gemini CLI' : src === 'openclaw' ? 'OpenClaw' : 'OpenCode'}
+                    {providerDisplayName(src)}
                 </button>
             {/each}
         </div>
