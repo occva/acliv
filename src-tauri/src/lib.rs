@@ -49,6 +49,7 @@ pub fn run() {
             rebuild_search_index,
             refresh_search_index,
             get_search_index_status,
+            has_search_index_changes,
             search_content,
             list_indexed_sessions,
             list_indexed_sessions_page,

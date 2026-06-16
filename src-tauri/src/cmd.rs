@@ -106,6 +106,13 @@ pub async fn get_search_index_status() -> Result<search_index::SearchIndexStatus
 }
 
 #[tauri::command]
+pub async fn has_search_index_changes() -> Result<search_index::SearchIndexChangeStatus, String> {
+    tauri::async_runtime::spawn_blocking(search_index::has_index_changes)
+        .await
+        .map_err(|e| format!("Failed to check search index changes: {e}"))?
+}
+
+#[tauri::command]
 pub async fn search_content(
     query: String,
     limit: Option<u32>,

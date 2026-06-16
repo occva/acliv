@@ -390,6 +390,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/provider/path", post(set_provider_path))
         .route("/provider/path/reset", post(reset_provider_path))
         .route("/search/index/status", get(get_search_index_status))
+        .route("/search/index/changes", get(has_search_index_changes))
         .route("/search/index/rebuild", post(rebuild_search_index))
         .route("/search/index/refresh", post(refresh_search_index))
         .route("/search/content", post(search_content))
@@ -937,6 +938,19 @@ async fn get_search_index_status(
     let status = spawn_blocking(search_index::get_index_status)
         .await
         .map_err(|e| AppError::internal(format!("Failed to load search index status: {e}")))?
+        .map_err(AppError::internal)?;
+
+    Ok(Json(ApiResult {
+        ok: true,
+        data: status,
+    }))
+}
+
+async fn has_search_index_changes(
+) -> Result<Json<ApiResult<search_index::SearchIndexChangeStatus>>, AppError> {
+    let status = spawn_blocking(search_index::has_index_changes)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to check search index changes: {e}")))?
         .map_err(AppError::internal)?;
 
     Ok(Json(ApiResult {

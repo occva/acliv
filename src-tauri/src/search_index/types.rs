@@ -55,6 +55,14 @@ pub struct RefreshSearchIndexResult {
     pub indexed_messages: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexChangeStatus {
+    pub changed: bool,
+    pub indexed_source_mtime: Option<i64>,
+    pub latest_source_mtime: Option<i64>,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

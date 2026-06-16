@@ -25,6 +25,20 @@ const VISIBLE_SESSION_CONDITION: &str = r#"
 const SNIPPET_WINDOW_CHARS: i64 = 120;
 const SNIPPET_CONTEXT_CHARS: i64 = 20;
 
+pub fn empty_sessions_page() -> PagedIndexedSessionsResult {
+    PagedIndexedSessionsResult {
+        total_count: 0,
+        items: Vec::new(),
+    }
+}
+
+pub fn empty_search_result() -> SearchContentResult {
+    SearchContentResult {
+        total_count: 0,
+        hits: Vec::new(),
+    }
+}
+
 pub fn list_sessions(
     connection: &Connection,
     limit: usize,

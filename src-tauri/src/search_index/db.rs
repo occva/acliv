@@ -1,9 +1,15 @@
 use std::fs;
 
+use std::path::PathBuf;
+
 use rusqlite::{Connection, OpenFlags};
 
+pub fn db_path() -> PathBuf {
+    crate::paths::get_search_db_path()
+}
+
 pub fn open_connection() -> Result<Connection, String> {
-    let db_path = crate::paths::get_search_db_path();
+    let db_path = db_path();
     let parent = db_path
         .parent()
         .ok_or_else(|| format!("Invalid search DB path: {}", db_path.display()))?;
@@ -41,7 +47,7 @@ pub fn open_connection() -> Result<Connection, String> {
 }
 
 pub fn open_readonly_connection() -> Result<Connection, String> {
-    let db_path = crate::paths::get_search_db_path();
+    let db_path = db_path();
     if !db_path.exists() {
         return Err(format!("Search DB does not exist: {}", db_path.display()));
     }

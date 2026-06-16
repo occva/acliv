@@ -7,6 +7,8 @@ mod status;
 mod tokenizer;
 pub mod types;
 
+use std::sync::{LazyLock, Mutex};
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SyncProgressPhase {
@@ -26,24 +28,72 @@ pub(crate) struct SyncProgress {
 pub use error::SearchIndexError;
 pub use types::{
     IndexedMessage, IndexedProjectOption, IndexedSession, PagedIndexedSessionsResult,
-    RebuildSearchIndexResult, RefreshSearchIndexResult, SearchContentResult, SearchIndexStatus,
+    RebuildSearchIndexResult, RefreshSearchIndexResult, SearchContentResult,
+    SearchIndexChangeStatus, SearchIndexStatus,
 };
 
+static INDEX_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+fn empty_index_status() -> SearchIndexStatus {
+    let db_path_buf = db::db_path();
+    SearchIndexStatus {
+        db_path: db_path_buf.to_string_lossy().to_string(),
+        ready: false,
+        sources_count: 0,
+        projects_count: 0,
+        sessions_count: 0,
+        messages_count: 0,
+        last_indexed_at: None,
+        last_successful_sync_at: None,
+        last_error_at: None,
+        db_size_bytes: 0,
+        error_count: 0,
+        sources: Vec::new(),
+    }
+}
+
+fn search_db_exists() -> bool {
+    db::db_path().exists()
+}
+
 pub fn rebuild_index() -> Result<RebuildSearchIndexResult, String> {
+    let _guard = INDEX_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Search index write lock is poisoned".to_string())?;
     let mut connection = db::open_connection()?;
     schema::run_migrations(&connection)?;
     indexer::rebuild_index(&mut connection)
 }
 
 pub fn get_index_status() -> Result<SearchIndexStatus, String> {
+    if !search_db_exists() {
+        return Ok(empty_index_status());
+    }
+
     let connection = db::open_readonly_connection()?;
     status::get_status(&connection)
 }
 
 pub fn refresh_index() -> Result<RefreshSearchIndexResult, String> {
+    let _guard = INDEX_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Search index write lock is poisoned".to_string())?;
     let mut connection = db::open_connection()?;
     schema::run_migrations(&connection)?;
     indexer::refresh_index(&mut connection)
+}
+
+pub fn has_index_changes() -> Result<SearchIndexChangeStatus, String> {
+    if !search_db_exists() {
+        return Ok(SearchIndexChangeStatus {
+            changed: true,
+            indexed_source_mtime: None,
+            latest_source_mtime: None,
+        });
+    }
+
+    let connection = db::open_readonly_connection()?;
+    indexer::has_index_changes(&connection)
 }
 
 #[allow(dead_code)]
@@ -53,6 +103,9 @@ pub(crate) fn refresh_index_with_progress<F>(
 where
     F: FnMut(SyncProgress),
 {
+    let _guard = INDEX_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Search index write lock is poisoned".to_string())?;
     let mut connection = db::open_connection()?;
     schema::run_migrations(&connection)?;
     indexer::refresh_index_with_progress(&mut connection, on_progress)
@@ -62,6 +115,10 @@ pub fn list_indexed_sessions(
     limit: usize,
     provider_id: Option<&str>,
 ) -> Result<Vec<IndexedSession>, String> {
+    if !search_db_exists() {
+        return Ok(Vec::new());
+    }
+
     let connection = db::open_readonly_connection()?;
     query::list_sessions(&connection, limit, provider_id)
 }
@@ -72,6 +129,10 @@ pub fn list_indexed_sessions_page(
     provider_id: Option<&str>,
     project_path: Option<&str>,
 ) -> Result<PagedIndexedSessionsResult, String> {
+    if !search_db_exists() {
+        return Ok(query::empty_sessions_page());
+    }
+
     let connection = db::open_readonly_connection()?;
     query::list_sessions_page(&connection, limit, offset, provider_id, project_path)
 }
@@ -79,6 +140,10 @@ pub fn list_indexed_sessions_page(
 pub fn list_indexed_projects(
     provider_id: Option<&str>,
 ) -> Result<Vec<IndexedProjectOption>, String> {
+    if !search_db_exists() {
+        return Ok(Vec::new());
+    }
+
     let connection = db::open_readonly_connection()?;
     query::list_projects(&connection, provider_id)
 }
@@ -87,6 +152,10 @@ pub fn list_indexed_sessions_by_source_paths(
     provider_id: &str,
     source_paths: &[String],
 ) -> Result<Vec<IndexedSession>, String> {
+    if !search_db_exists() {
+        return Ok(Vec::new());
+    }
+
     let connection = db::open_readonly_connection()?;
     query::list_sessions_by_source_paths(&connection, provider_id, source_paths)
 }
@@ -108,6 +177,10 @@ pub fn search_content(
     project_path: Option<&str>,
     sort_by: Option<&str>,
 ) -> Result<SearchContentResult, String> {
+    if !search_db_exists() {
+        return Ok(query::empty_search_result());
+    }
+
     let connection = db::open_readonly_connection()?;
     query::search_content(
         &connection,
@@ -121,6 +194,9 @@ pub fn search_content(
 }
 
 pub fn delete_indexed_session(provider_id: &str, source_path: &str) -> Result<bool, String> {
+    let _guard = INDEX_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Search index write lock is poisoned".to_string())?;
     let mut connection = db::open_connection()?;
     schema::run_migrations(&connection)?;
     indexer::delete_indexed_session(&mut connection, provider_id, source_path)
@@ -136,6 +212,48 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn uninitialized_index_returns_empty_read_models() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tempdir = tempdir().expect("tempdir");
+        let index_dir = tempdir.path().join("missing-index");
+        let _env = EnvGuard::set_many(&[("ACLIV_INDEX_DIR", index_dir.to_string_lossy().as_ref())]);
+
+        let status = get_index_status().expect("status");
+        assert!(!status.ready);
+        assert_eq!(status.sessions_count, 0);
+
+        let sessions = list_indexed_sessions(10, Some("openclaw")).expect("sessions");
+        assert!(sessions.is_empty());
+
+        let paged =
+            list_indexed_sessions_page(10, 0, Some("openclaw"), None).expect("paged sessions");
+        assert_eq!(paged.total_count, 0);
+        assert!(paged.items.is_empty());
+
+        let projects = list_indexed_projects(Some("openclaw")).expect("projects");
+        assert!(projects.is_empty());
+
+        let by_paths =
+            list_indexed_sessions_by_source_paths("openclaw", &["missing.json".to_string()])
+                .expect("by source paths");
+        assert!(by_paths.is_empty());
+
+        let search = search_content(
+            "needle",
+            10,
+            Some("openclaw"),
+            None,
+            None,
+            Some("relevance"),
+        )
+        .expect("search");
+        assert_eq!(search.total_count, 0);
+        assert!(search.hits.is_empty());
+    }
 
     #[test]
     fn rebuild_and_search_roundtrip() {
@@ -246,6 +364,20 @@ mod tests {
             .expect("search removed session")
             .hits;
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn change_check_detects_removed_indexed_source() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fixture = SearchFixture::new();
+
+        rebuild_index().expect("initial rebuild");
+        fs::remove_file(&fixture.source_path).expect("remove indexed source");
+
+        let changes = has_index_changes().expect("check index changes");
+        assert!(changes.changed);
     }
 
     #[test]
@@ -450,12 +582,14 @@ mod tests {
                 .join("share")
                 .join("opencode")
                 .join("storage");
+            let pi_sessions = base.join(".pi").join("agent").join("sessions");
 
             fs::create_dir_all(&claude_project).expect("create claude project");
             fs::create_dir_all(&codex_sessions).expect("create codex root");
             fs::create_dir_all(&gemini_tmp).expect("create gemini root");
             fs::create_dir_all(&openclaw_agents).expect("create openclaw root");
             fs::create_dir_all(&opencode_storage).expect("create opencode root");
+            fs::create_dir_all(&pi_sessions).expect("create pi root");
 
             let source_path = claude_project.join("session-claude-1.jsonl");
 
@@ -475,6 +609,7 @@ mod tests {
                     "ACLIV_OPENCODE_DIR",
                     opencode_storage.to_string_lossy().as_ref(),
                 ),
+                ("ACLIV_PI_DIR", pi_sessions.to_string_lossy().as_ref()),
             ]);
 
             let fixture = Self {

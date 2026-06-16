@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -9,10 +9,10 @@ use crate::session_manager::{self, SessionMeta};
 
 use super::status;
 use super::tokenizer;
-use super::types::{RebuildSearchIndexResult, RefreshSearchIndexResult};
+use super::types::{RebuildSearchIndexResult, RefreshSearchIndexResult, SearchIndexChangeStatus};
 use super::{SyncProgress, SyncProgressPhase};
 
-const PROVIDERS: [&str; 5] = ["claude", "codex", "gemini", "openclaw", "opencode"];
+const PROVIDERS: [&str; 6] = ["claude", "codex", "gemini", "openclaw", "opencode", "pi"];
 
 pub fn rebuild_index(connection: &mut Connection) -> Result<RebuildSearchIndexResult, String> {
     let sessions = session_manager::scan_sessions();
@@ -60,6 +60,26 @@ pub fn rebuild_index(connection: &mut Connection) -> Result<RebuildSearchIndexRe
 
 pub fn refresh_index(connection: &mut Connection) -> Result<RefreshSearchIndexResult, String> {
     refresh_index_inner(connection, Option::<fn(SyncProgress)>::None)
+}
+
+pub fn has_index_changes(connection: &Connection) -> Result<SearchIndexChangeStatus, String> {
+    let indexed_provider_mtimes = indexed_provider_mtimes(connection)?;
+    let latest_provider_mtimes = latest_provider_source_mtimes()?;
+    let indexed_source_mtime = indexed_provider_mtimes.values().copied().max();
+    let latest_source_mtime = latest_provider_mtimes.values().copied().max();
+    let changed = indexed_source_missing(connection)?
+        || latest_provider_mtimes.iter().any(|(provider, latest)| {
+            match indexed_provider_mtimes.get(provider) {
+                Some(indexed) => latest > indexed,
+                None => true,
+            }
+        });
+
+    Ok(SearchIndexChangeStatus {
+        changed,
+        indexed_source_mtime,
+        latest_source_mtime,
+    })
 }
 
 #[allow(dead_code)]
@@ -640,6 +660,10 @@ fn read_source_metadata(source_path: &str) -> FileState {
         Err(_) => return FileState::default(),
     };
 
+    if metadata.is_dir() {
+        return read_directory_source_metadata(Path::new(source_path));
+    }
+
     let raw_mtime = metadata
         .modified()
         .ok()
@@ -651,6 +675,174 @@ fn read_source_metadata(source_path: &str) -> FileState {
         raw_mtime,
         raw_size,
     }
+}
+
+fn read_directory_source_metadata(path: &Path) -> FileState {
+    let mut state = FileState::default();
+    collect_directory_metadata(path, &mut state);
+    state
+}
+
+fn collect_directory_metadata(path: &Path, state: &mut FileState) {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+
+        if metadata.is_dir() {
+            collect_directory_metadata(&path, state);
+            continue;
+        }
+
+        if let Some(mtime) = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        {
+            if state
+                .raw_mtime
+                .map(|current| mtime > current)
+                .unwrap_or(true)
+            {
+                state.raw_mtime = Some(mtime);
+            }
+        }
+
+        if let Ok(size) = i64::try_from(metadata.len()) {
+            state.raw_size = Some(state.raw_size.unwrap_or(0).saturating_add(size));
+        }
+    }
+}
+
+fn indexed_provider_mtimes(connection: &Connection) -> Result<HashMap<String, i64>, String> {
+    let mut stmt = connection
+        .prepare(
+            r#"
+            SELECT src.name, MAX(s.raw_mtime)
+            FROM sessions s
+            JOIN sources src ON src.id = s.source_id
+            GROUP BY src.name
+            "#,
+        )
+        .map_err(|e| format!("Failed to prepare indexed provider mtime query: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+        })
+        .map_err(|e| format!("Failed to query indexed provider mtimes: {e}"))?;
+
+    let mut mtimes = HashMap::new();
+    for row in rows {
+        let (provider, mtime) =
+            row.map_err(|e| format!("Failed to read indexed provider mtime: {e}"))?;
+        if let Some(mtime) = mtime {
+            mtimes.insert(provider, mtime);
+        }
+    }
+    Ok(mtimes)
+}
+
+fn indexed_source_missing(connection: &Connection) -> Result<bool, String> {
+    let mut stmt = connection
+        .prepare("SELECT source_path FROM sessions")
+        .map_err(|e| format!("Failed to prepare indexed source path query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Failed to query indexed source paths: {e}"))?;
+
+    for row in rows {
+        let source_path = row.map_err(|e| format!("Failed to read indexed source path: {e}"))?;
+        if !Path::new(&source_path).exists() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn latest_provider_source_mtimes() -> Result<HashMap<String, i64>, String> {
+    let mut latest = HashMap::new();
+    for provider in PROVIDERS {
+        let root = crate::paths::get_provider_base_dir(provider)?;
+        let mut provider_latest = None;
+        collect_latest_source_mtime(provider, &root, &root, &mut provider_latest);
+        if let Some(mtime) = provider_latest {
+            latest.insert(provider.to_string(), mtime);
+        }
+    }
+    Ok(latest)
+}
+
+fn collect_latest_source_mtime(provider: &str, root: &Path, path: &Path, latest: &mut Option<i64>) {
+    if !path.exists() {
+        return;
+    }
+
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_latest_source_mtime(provider, root, &path, latest);
+            continue;
+        }
+        if !is_source_candidate(provider, root, &path) {
+            continue;
+        }
+        let Some(mtime) = file_mtime_ms(&path) else {
+            continue;
+        };
+        if latest.map(|current| mtime > current).unwrap_or(true) {
+            *latest = Some(mtime);
+        }
+    }
+}
+
+fn is_source_candidate(provider: &str, root: &Path, path: &PathBuf) -> bool {
+    let extension = path.extension().and_then(|ext| ext.to_str());
+    match provider {
+        "gemini" => extension == Some("json") && path_components_contain(path, "chats"),
+        "opencode" => {
+            extension == Some("json")
+                && (path_under(root, path, "session") || path_under(root, path, "message"))
+        }
+        _ => extension == Some("jsonl"),
+    }
+}
+
+fn path_under(root: &Path, path: &Path, child: &str) -> bool {
+    path.strip_prefix(root)
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .map(|component| component.as_os_str() == child)
+        .unwrap_or(false)
+}
+
+fn path_components_contain(path: &Path, segment: &str) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == segment)
+}
+
+fn file_mtime_ms(path: &Path) -> Option<i64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
 }
 
 fn resolve_project(session: &SessionMeta, source_path: &str) -> ResolvedProject {
@@ -696,6 +888,7 @@ fn provider_bucket(provider_id: &str) -> &'static str {
         "gemini" => "Gemini Sessions",
         "openclaw" => "OpenClaw Sessions",
         "opencode" => "OpenCode Sessions",
+        "pi" => "Pi Sessions",
         _ => "Unknown Sessions",
     }
 }
