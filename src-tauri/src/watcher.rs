@@ -16,7 +16,7 @@ use crate::search_index;
 use crate::search_index::types::IndexedSourceRef;
 
 const SEARCH_INDEX_SYNC_EVENT: &str = "search-index-sync";
-const PROVIDERS: [&str; 5] = ["claude", "codex", "gemini", "openclaw", "opencode"];
+const PROVIDERS: [&str; 6] = ["claude", "codex", "gemini", "openclaw", "opencode", "pi"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,10 +263,14 @@ fn collect_watch_roots() -> Result<Vec<(String, PathBuf)>, String> {
 fn should_refresh(kind: &EventKind) -> bool {
     matches!(
         kind,
-        EventKind::Create(CreateKind::File)
+        EventKind::Create(CreateKind::Any)
+            | EventKind::Create(CreateKind::File)
+            | EventKind::Create(CreateKind::Folder)
             | EventKind::Modify(ModifyKind::Data(_))
+            | EventKind::Modify(ModifyKind::Metadata(_))
             | EventKind::Modify(ModifyKind::Name(_))
             | EventKind::Modify(ModifyKind::Any)
+            | EventKind::Remove(RemoveKind::Folder)
             | EventKind::Remove(RemoveKind::File)
             | EventKind::Remove(RemoveKind::Any)
     )

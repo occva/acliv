@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PROVIDERS: [ProviderDefinition; 5] = [
+const PROVIDERS: [ProviderDefinition; 6] = [
     ProviderDefinition {
         id: "claude",
         name: "Claude",
@@ -44,6 +44,14 @@ const PROVIDERS: [ProviderDefinition; 5] = [
         hidden_dir_name: "",
         data_subdir: "storage",
         default_kind: ProviderDefaultKind::OpenCode,
+    },
+    ProviderDefinition {
+        id: "pi",
+        name: "Pi",
+        env_var: "ACLIV_PI_DIR",
+        hidden_dir_name: ".pi",
+        data_subdir: "agent/sessions",
+        default_kind: ProviderDefaultKind::HomeHidden,
     },
 ];
 
@@ -322,6 +330,11 @@ pub fn get_opencode_storage_dir() -> PathBuf {
     get_provider_base_dir("opencode").unwrap_or_else(|_| {
         resolve_provider_default(provider_definition("opencode").expect("opencode provider"))
     })
+}
+
+pub fn get_pi_sessions_dir() -> PathBuf {
+    get_provider_base_dir("pi")
+        .unwrap_or_else(|_| resolve_provider_dir("ACLIV_PI_DIR", ".pi", "agent/sessions"))
 }
 
 pub fn get_provider_base_dir(provider_id: &str) -> Result<PathBuf, String> {
