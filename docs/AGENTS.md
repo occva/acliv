@@ -21,6 +21,9 @@ Run from repository root:
 - `npm run build`: build frontend assets.
 - `npm exec tauri build -- --no-bundle`: build the desktop executable for direct local launch. Use this instead of `cargo build` when verifying desktop behavior.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>`: build release artifacts and installer bundles into `release/v<version>/`.
+- `./scripts/check.sh --scope release`: run release checks natively on macOS/Linux.
+- `./scripts/build-release-macos.sh --version <x.y.z>`: build local macOS DMG/updater artifacts for verification.
+- `./scripts/publish-release.sh --version <x.y.z>`: validate and push a release tag from macOS.
 - `npx svelte-check`: run Svelte/TypeScript diagnostics.
 - `cargo test --manifest-path src-tauri/Cargo.toml`: run Rust tests.
 

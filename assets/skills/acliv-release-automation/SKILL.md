@@ -38,6 +38,9 @@ Prefer executing the existing project scripts instead of reimplementing the work
   - `package.json`
   - `package-lock.json`
   - `src-tauri/Cargo.toml`
+  - `src-tauri/Cargo.lock`
+  - `src-tauri/web/Cargo.toml`
+  - `src-tauri/web/Cargo.lock`
   - `src-tauri/tauri.conf.json`
 - Release tag format:
   - `v<version>`
@@ -47,15 +50,14 @@ Prefer executing the existing project scripts instead of reimplementing the work
   - manually drafted and confirmed before publish
   - stored at `docs/releases/v<version>.md`
   - copied into `release/v<version>/release-notes-v<version>.md` during local/CI builds
-- Release check entrypoint:
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release`
-- Release build entrypoint:
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>`
-  - custom notes source: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z> -ReleaseNotesPath <path>`
-- Release notes validation entrypoint:
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-release-notes.ps1 -Path release/v<version>/release-notes-v<version>.md`
-- Release publish entrypoint:
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>`
+- Windows entrypoints:
+  - check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release`
+  - build: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>`
+  - publish: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>`
+- macOS entrypoints:
+  - check: `./scripts/check.sh --scope release`
+  - build: `./scripts/build-release-macos.sh --version <x.y.z>`
+  - publish: `./scripts/publish-release.sh --version <x.y.z>`
 - GitHub Actions builds and uploads all desktop release artifacts. Local artifacts in `release/v<version>/` are verification output only.
 
 ## Required Behavior
@@ -125,27 +127,33 @@ git log <last_tag>..HEAD --pretty=format:%s
 
 ### 3. Run readiness checks
 
-Always run:
+Always use the native entrypoint for the current host:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release
+```
+
+```bash
+./scripts/check.sh --scope release
 ```
 
 If it fails, stop and fix the actual issue before attempting release build or publish.
 
 ### 4. Verify locally before publishing
 
-Use the project build script, not a manual sequence, unless the script itself is broken and needs repair:
+Use the project build script for the current host, not a manual sequence:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>
 ```
 
-If the working tree is intentionally dirty and the user is doing a rehearsal or controlled release prep, use:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z> -AllowDirty
+```bash
+./scripts/build-release-macos.sh --version <x.y.z>
 ```
+
+For an intentional dirty-tree rehearsal, use `-AllowDirty` on Windows or `--allow-dirty` on macOS.
+
+When the macOS host has no updater private key, `--unsigned` MAY be used for a local DMG-only rehearsal. Never upload that unsigned output; formal assets must still come from the signed GitHub Actions build.
 
 Local builds are only a verification rehearsal. Do not upload these files to GitHub Release.
 
@@ -169,15 +177,17 @@ Before any real publish, review the planned notes and make sure `## Changes` is 
 - keep verification facts concrete and accurate
 - keep the `## Verification` section intact unless it is factually wrong
 
-If local release notes are copied during rehearsal, run the repo validator:
+If local release notes are copied during rehearsal, run the native validator:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-release-notes.ps1 -Path release/v<version>/release-notes-v<version>.md
 ```
 
-If the validator fails, rewrite the source notes before publish.
+```bash
+./scripts/assert-release-notes.sh release/v<version>/release-notes-v<version>.md
+```
 
-For CI tag releases, `build-release.ps1` requires `docs/releases/v<version>.md` to already exist and pass validation. Do not add fallback behavior that generates `## Changes` from git history.
+If validation fails, rewrite the source notes before publish. CI tag builds require `docs/releases/v<version>.md` to already exist and pass validation.
 
 ### 5. Publish only when asked
 
@@ -193,10 +203,14 @@ Before publish, verify:
 - the user explicitly approved the changelog and explicitly asked to publish
 - the user asked to actually publish, not just rehearse
 
-Then run:
+Then run the native publish entrypoint:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>
+```
+
+```bash
+./scripts/publish-release.sh --version <x.y.z>
 ```
 
 ### 6. Summarize outcomes
@@ -267,28 +281,40 @@ Desktop setup bundling needs `makensis`.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release
 ```
 
+```bash
+./scripts/check.sh --scope release
+```
+
 ### Build
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>
 ```
 
+```bash
+./scripts/build-release-macos.sh --version <x.y.z>
+```
+
 ### Build with dirty tree
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z> -AllowDirty
+```bash
+./scripts/build-release-macos.sh --version <x.y.z> --allow-dirty
 ```
 
 ### Validate release notes
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-release-notes.ps1 -Path release/v<version>/release-notes-v<version>.md
+```bash
+./scripts/assert-release-notes.sh release/v<version>/release-notes-v<version>.md
 ```
 
 ### Publish
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>
+```
+
+```bash
+./scripts/publish-release.sh --version <x.y.z>
 ```
 
 ## Example Prompts This Skill Should Handle

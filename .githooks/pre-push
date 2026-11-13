@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope push
-powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features web"
+./scripts/check.sh --scope push
+cargo check --manifest-path src-tauri/web/Cargo.toml
 
 exit 0

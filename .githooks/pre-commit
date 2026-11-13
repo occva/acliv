@@ -21,15 +21,15 @@ echo "$changed_files" | grep -E '^src-tauri/' >/dev/null 2>&1 && needs_rust_chec
 echo "$changed_files" | grep -E '^(package.json|src-tauri/Cargo.toml|src-tauri/tauri.conf.json)$' >/dev/null 2>&1 && needs_version_check=1
 
 if [ "$needs_frontend_check" -eq 1 ]; then
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope local
+  ./scripts/check.sh --scope local
 fi
 
 if [ "$needs_rust_check" -eq 1 ] && [ "$needs_frontend_check" -eq 0 ]; then
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo check --manifest-path src-tauri/Cargo.toml"
+  cargo check --manifest-path src-tauri/Cargo.toml
 fi
 
 if [ "$needs_version_check" -eq 1 ]; then
-  powershell -NoProfile -ExecutionPolicy Bypass -Command '$pkg=((Get-Content "package.json" -Raw | ConvertFrom-Json).version); $tauri=((Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version); $cargo=([regex]::Match((Get-Content "src-tauri/Cargo.toml" -Raw),''(?m)^version = "(.+?)"$'').Groups[1].Value); if($pkg -ne $tauri -or $pkg -ne $cargo){ throw "Version mismatch: package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json must match." }'
+  ./scripts/assert-version.sh
 fi
 
 exit 0

@@ -221,6 +221,8 @@
     opencode: 'OpenCode Sessions',
     claude: 'Claude Sessions',
     pi: 'Pi Sessions',
+    omp: 'OMP Sessions',
+    dsh: 'DSH Sessions',
   };
 
   function formatTimestamp(ms?: number): string {
@@ -377,7 +379,7 @@
   let conversations = $state<ConvSummary[]>([]);
   let currentConversation = $state<any>(null);
   let stats = $state<Stats>({ projects_count: 0, conversations_count: 0, messages_count: 0 });
-  const sources = ['claude', 'codex', 'gemini', 'openclaw', 'opencode', 'pi'];
+  const sources = ['claude', 'codex', 'gemini', 'openclaw', 'opencode', 'pi', 'omp', 'dsh'];
   let currentSource = $state(getStoredSource() ?? sources[0]);
 
   // UI State
@@ -402,6 +404,9 @@
   let indexLibraryProjectFilter = $state('all');
   let isIndexProviderDropdownOpen = $state(false);
   let isIndexProjectDropdownOpen = $state(false);
+  let isOtherSourceOptionsExpanded = $state(false);
+  let isOtherIndexSourcesExpanded = $state(false);
+  let isOtherProviderPathsExpanded = $state(false);
   let isIndexLibraryLoading = $state(false);
   let searchRequestToken = 0;
   let searchTimeRange = $state<SearchTimeRange>('all');
@@ -529,6 +534,7 @@
   async function bootstrapAuthenticatedApp() {
     await loadAppVersionInfo();
     await loadData();
+    void refreshProviderPaths();
     await syncConversationFromRoute();
     scheduleSearchIndexBootstrap();
   }
@@ -2249,12 +2255,12 @@
   }
   function selectSource(source: string) {
       if (currentSource === source) {
-          isSourceDropdownOpen = false;
+          closeSourceDropdown();
           return;
       }
       currentSource = source;
       localStorage.setItem(SOURCE_STORAGE_KEY, source);
-      isSourceDropdownOpen = false;
+      closeSourceDropdown();
       isProjectMenuOpen = false;
       currentProject = null;
       currentConversation = null;
@@ -2432,7 +2438,9 @@
       closeSearch();
       indexModalTab = 'overview';
       isIndexModalOpen = true;
-      await refreshSearchIndexStatus();
+      isOtherIndexSourcesExpanded = false;
+      isOtherProviderPathsExpanded = false;
+      await Promise.all([refreshSearchIndexStatus(), refreshProviderPaths()]);
   }
 
   function closeIndexModal() {
@@ -2554,6 +2562,7 @@
       if (tab === 'sessions') {
           await refreshIndexLibrary(false, true);
       } else if (tab === 'providers') {
+          isOtherProviderPathsExpanded = false;
           await refreshProviderPaths();
       } else if (tab === 'about' && !appVersionInfo) {
           await loadAppVersionInfo();
@@ -2629,7 +2638,7 @@
   function handleWindowClick(event: MouseEvent) {
       const target = event.target;
       if (isSourceDropdownOpen && target instanceof Node && !document.querySelector('.provider-menu')?.contains(target)) {
-          isSourceDropdownOpen = false;
+          closeSourceDropdown();
       }
       if (isProjectMenuOpen) {
           isProjectMenuOpen = false;
@@ -2652,7 +2661,7 @@
           return true;
       }
       if (isSourceDropdownOpen) {
-          isSourceDropdownOpen = false;
+          closeSourceDropdown();
           return true;
       }
       if (isIndexProviderDropdownOpen) {
@@ -2765,12 +2774,84 @@
   function providerDisplayName(providerId: string): string {
       return ({
           claude: 'Claude CLI',
-          codex: 'Codex CLI',
+          codex: 'Codex',
           gemini: 'Gemini CLI',
           openclaw: 'OpenClaw',
           opencode: 'OpenCode',
           pi: 'Pi',
+          omp: 'OMP',
+          dsh: 'DSH',
       } as Record<string, string>)[providerId] ?? providerId;
+  }
+
+  function providerPathIsReadable(providerId: string): boolean | null {
+      const provider = providerPaths.find(item => item.providerId === providerId);
+      return provider ? provider.exists && provider.readable : null;
+  }
+
+  function providerHasSessions(providerId: string): boolean {
+      return allSessions.some(session => session.providerId === providerId) ||
+          (searchIndexStatus?.sources.some(source =>
+              source.providerId === providerId && source.sessionsCount > 0
+          ) ?? false);
+  }
+
+  function providerIsLocal(providerId: string): boolean {
+      return providerPathIsReadable(providerId) ?? providerHasSessions(providerId);
+  }
+
+  function primarySourceOptions(): string[] {
+      return sources.filter(source => source === currentSource || providerIsLocal(source));
+  }
+
+  function otherSourceOptions(): string[] {
+      return sources.filter(source => source !== currentSource && !providerIsLocal(source));
+  }
+
+  function primaryIndexSourceStats() {
+      return (searchIndexStatus?.sources ?? []).filter(source => providerIsLocal(source.providerId));
+  }
+
+  function otherIndexSourceStats() {
+      return (searchIndexStatus?.sources ?? []).filter(source => !providerIsLocal(source.providerId));
+  }
+
+  function primaryProviderPaths(): api.ProviderPathInfo[] {
+      return providerPaths.filter(provider => provider.exists && provider.readable);
+  }
+
+  function otherProviderPaths(): api.ProviderPathInfo[] {
+      return providerPaths.filter(provider => !provider.exists || !provider.readable);
+  }
+
+  function groupedIndexSourceStats() {
+      return [...primaryIndexSourceStats(), ...otherIndexSourceStats()];
+  }
+
+  function groupedProviderPaths(): api.ProviderPathInfo[] {
+      return [...primaryProviderPaths(), ...otherProviderPaths()];
+  }
+
+  function indexedProviderOptions(): string[] {
+      const indexed = new Set(
+          (searchIndexStatus?.sources ?? [])
+              .filter(source => source.sessionsCount > 0)
+              .map(source => source.providerId),
+      );
+      return sources.filter(source => indexed.has(source));
+  }
+
+  function closeSourceDropdown() {
+      isSourceDropdownOpen = false;
+      isOtherSourceOptionsExpanded = false;
+  }
+
+  function toggleSourceDropdown() {
+      if (isSourceDropdownOpen) {
+          closeSourceDropdown();
+      } else {
+          isSourceDropdownOpen = true;
+      }
   }
 
   function providerPathSourceLabel(source: string): string {
@@ -2874,17 +2955,21 @@
           openclaw: 'openclaw.png',
           opencode: theme === 'dark' ? 'opencode.png' : 'opencode-light.png',
           pi: theme === 'dark' ? 'pi.png' : 'pi-light.png',
+          omp: 'omp.png',
+          dsh: 'deepseek.png',
       };
       return `./brands/${filenames[source] ?? 'claude-code.png'}`;
   }
 
   const sourceLabel = $derived(({
       'claude': 'Claude CLI',
-      'codex': 'Codex CLI',
+      'codex': 'Codex',
       'gemini': 'Gemini CLI',
       'openclaw': 'OpenClaw',
       'opencode': 'OpenCode',
-      'pi': 'Pi'
+      'pi': 'Pi',
+      'omp': 'OMP',
+      'dsh': 'DSH'
   } as Record<string, string>)[currentSource] || t('common.history'));
   const selectedSession = $derived(
       currentConversation
@@ -3010,7 +3095,7 @@
 
             <div class="provider-menu-label">{t('common.provider')}</div>
             <div class="provider-menu-options">
-                {#each sources as src}
+                {#each primarySourceOptions() as src}
                     <button
                         class="source-item provider-option"
                         class:selected={currentSource === src}
@@ -3026,6 +3111,37 @@
                         {/if}
                     </button>
                 {/each}
+                {#if otherSourceOptions().length > 0}
+                    <button
+                        class="provider-other-toggle"
+                        class:expanded={isOtherSourceOptionsExpanded}
+                        type="button"
+                        aria-expanded={isOtherSourceOptionsExpanded}
+                        onclick={(event) => {
+                            event.stopPropagation();
+                            isOtherSourceOptionsExpanded = !isOtherSourceOptionsExpanded;
+                        }}
+                    >
+                        <span>{t('common.other_count', { count: otherSourceOptions().length })}</span>
+                        <span class="dropdown-arrow" aria-hidden="true">{@html ICONS.dropdown_arrow}</span>
+                    </button>
+                    {#if isOtherSourceOptionsExpanded}
+                        <div class="provider-other-options">
+                            {#each otherSourceOptions() as src}
+                                <button
+                                    class="source-item provider-option"
+                                    onclick={() => selectSource(src)}
+                                    type="button"
+                                    role="menuitemradio"
+                                    aria-checked="false"
+                                >
+                                    <span class="provider-option-avatar" aria-hidden="true"><img src={providerIconSrc(src)} alt="" /></span>
+                                    <span class="provider-option-copy">{providerDisplayName(src)}</span>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+                {/if}
             </div>
         </div>
 
@@ -3034,7 +3150,7 @@
             class:active={isSourceDropdownOpen}
             aria-expanded={isSourceDropdownOpen}
             aria-haspopup="menu"
-            onclick={() => isSourceDropdownOpen = !isSourceDropdownOpen}
+            onclick={toggleSourceDropdown}
             type="button"
         >
             <span class="provider-avatar" aria-hidden="true"><img src={providerIconSrc(currentSource)} alt="" /></span>
@@ -3560,8 +3676,8 @@
                   <div class="index-modal-title-row">
                       <span class:status-ok={searchIndexStatus?.ready} class="index-status-dot"></span>
                       <h3>{t('index.title')}</h3>
+                      <span class="index-status-text">{indexStatusText}</span>
                   </div>
-                  <p>{indexStatusText}</p>
               </div>
               <button class="btn-close-search" onclick={closeIndexModal} type="button">ESC</button>
           </div>
@@ -3655,17 +3771,31 @@
                   </div>
                   {#if searchIndexStatus?.sources?.length}
                       <div class="index-source-grid">
-                          {#each searchIndexStatus.sources as source}
-                              <div class="index-source-card">
-                                  <div class="index-source-head">
-                                      <strong>{providerDisplayName(source.providerId)}</strong>
-                                      <span>{t('common.count.sessions', { count: source.sessionsCount })}</span>
+                          {#each groupedIndexSourceStats() as source, index}
+                              {#if index === primaryIndexSourceStats().length && otherIndexSourceStats().length > 0}
+                                  <button
+                                      class="provider-group-toggle"
+                                      class:expanded={isOtherIndexSourcesExpanded}
+                                      type="button"
+                                      aria-expanded={isOtherIndexSourcesExpanded}
+                                      onclick={() => isOtherIndexSourcesExpanded = !isOtherIndexSourcesExpanded}
+                                  >
+                                      <span>{t('common.other_count', { count: otherIndexSourceStats().length })}</span>
+                                      <span class="dropdown-arrow" aria-hidden="true">{@html ICONS.dropdown_arrow}</span>
+                                  </button>
+                              {/if}
+                              {#if index < primaryIndexSourceStats().length || isOtherIndexSourcesExpanded}
+                                  <div class="index-source-card">
+                                      <div class="index-source-head">
+                                          <strong>{providerDisplayName(source.providerId)}</strong>
+                                          <span>{t('common.count.sessions', { count: source.sessionsCount })}</span>
+                                      </div>
+                                      <div class="index-source-metrics">
+                                          <span>{t('common.count.projects', { count: source.projectsCount })}</span>
+                                          <span>{t('common.count.messages', { count: source.messagesCount })}</span>
+                                      </div>
                                   </div>
-                                  <div class="index-source-metrics">
-                                      <span>{t('common.count.projects', { count: source.projectsCount })}</span>
-                                      <span>{t('common.count.messages', { count: source.messagesCount })}</span>
-                                  </div>
-                              </div>
+                              {/if}
                           {/each}
                       </div>
                   {/if}
@@ -3746,8 +3876,23 @@
                       {:else if providerPaths.length === 0}
                           <div class="index-library-empty">{t('index.no_provider_paths')}</div>
                       {:else}
-                          {#each providerPaths as provider}
-                              <div class="provider-path-card">
+                          {#each groupedProviderPaths() as provider, index}
+                              {#if index === primaryProviderPaths().length && otherProviderPaths().length > 0}
+                                  <button
+                                      class="provider-group-toggle provider-path-group-toggle"
+                                      class:expanded={isOtherProviderPathsExpanded}
+                                      type="button"
+                                      aria-expanded={isOtherProviderPathsExpanded}
+                                      onclick={() => isOtherProviderPathsExpanded = !isOtherProviderPathsExpanded}
+                                  >
+                                      <span>{t('common.other_count', { count: otherProviderPaths().length })}</span>
+                                      <span class="dropdown-arrow" aria-hidden="true">{@html ICONS.dropdown_arrow}</span>
+                                  </button>
+                              {/if}
+                              <div
+                                  class="provider-path-card"
+                                  class:provider-path-card-other-hidden={(!provider.exists || !provider.readable) && !isOtherProviderPathsExpanded}
+                              >
                                   <div class="provider-path-head">
                                       <div class="provider-path-title">
                                           <strong>{providerDisplayName(provider.providerId)}</strong>
@@ -3942,7 +4087,7 @@
                                   >
                                       {t('index.all_providers')}
                                   </button>
-                                  {#each sources as source}
+                                  {#each indexedProviderOptions() as source}
                                       <button
                                           class="source-item"
                                           class:selected={indexLibraryProviderFilter === source}
@@ -4010,14 +4155,9 @@
                                       <span class="meta-item">{@html getIcon('message', 12)} {t('common.count.messages', { count: item.messageCount })}</span>
                                       <span class="meta-item">{@html getIcon('clock', 12)} {formatTimestamp(item.lastActiveAt ?? item.createdAt)}</span>
                                   </div>
-                                  {#if item.model || item.cwd}
+                                  {#if item.model}
                                       <div class="index-library-extra">
-                                          {#if item.model}
-                                              <span>{t('common.model')}: {item.model}</span>
-                                          {/if}
-                                          {#if item.cwd}
-                                              <span>{t('common.cwd')}: {item.cwd}</span>
-                                          {/if}
+                                          <span>{t('common.model')}: {item.model}</span>
                                       </div>
                                   {/if}
                               </button>

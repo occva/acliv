@@ -18,6 +18,8 @@ const zh: Record<TranslationKey, string> = {
     'common.count.results': '{{count}} 条结果',
     'common.count.sessions': '{{count}} 个会话',
     'common.count.projects': '{{count}} 个项目',
+    'common.other': '其他',
+    'common.other_count': '其他（{{count}}）',
 
     'auth.checking_status_title': '验证登录状态',
     'auth.checking_status_body': '正在检查当前登录状态...',

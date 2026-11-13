@@ -3,7 +3,7 @@ pub mod providers;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codex, gemini, openclaw, opencode, pi};
+use providers::{claude, codex, dsh, gemini, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,13 +109,15 @@ fn is_message_kind(value: &String) -> bool {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (r1, r2, r3, r4, r5, r6) = std::thread::scope(|s| {
+    let (r1, r2, r3, r4, r5, r6, r7, r8) = std::thread::scope(|s| {
         let h1 = s.spawn(codex::scan_sessions);
         let h2 = s.spawn(claude::scan_sessions);
         let h3 = s.spawn(opencode::scan_sessions);
         let h4 = s.spawn(openclaw::scan_sessions);
         let h5 = s.spawn(gemini::scan_sessions);
         let h6 = s.spawn(pi::scan_sessions);
+        let h7 = s.spawn(pi::scan_omp_sessions);
+        let h8 = s.spawn(dsh::scan_sessions);
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -123,6 +125,8 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             h4.join().unwrap_or_default(),
             h5.join().unwrap_or_default(),
             h6.join().unwrap_or_default(),
+            h7.join().unwrap_or_default(),
+            h8.join().unwrap_or_default(),
         )
     });
 
@@ -133,6 +137,8 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r4);
     sessions.extend(r5);
     sessions.extend(r6);
+    sessions.extend(r7);
+    sessions.extend(r8);
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -152,6 +158,8 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
         "pi" => pi::load_messages(path),
+        "omp" => pi::load_messages(path),
+        "dsh" => dsh::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -188,6 +196,8 @@ fn delete_session_with_root(
         "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
         "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+        "omp" => pi::delete_omp_session(&validated_root, &validated_source, session_id),
+        "dsh" => dsh::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }

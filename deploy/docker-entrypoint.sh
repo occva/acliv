@@ -71,7 +71,9 @@ for provider in \
   "Gemini:${ACLIV_GEMINI_DIR:-}" \
   "OpenClaw:${ACLIV_OPENCLAW_DIR:-}" \
   "OpenCode:${ACLIV_OPENCODE_DIR:-}" \
-  "Pi:${ACLIV_PI_DIR:-}"
+  "Pi:${ACLIV_PI_DIR:-}" \
+  "OMP:${ACLIV_OMP_DIR:-}" \
+  "DSH:${ACLIV_DSH_DIR:-}"
 do
   label="${provider%%:*}"
   path="${provider#*:}"

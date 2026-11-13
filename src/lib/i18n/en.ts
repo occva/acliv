@@ -16,6 +16,8 @@ export const en = {
     'common.count.results': '{{count}} results',
     'common.count.sessions': '{{count}} sessions',
     'common.count.projects': '{{count}} projects',
+    'common.other': 'Other',
+    'common.other_count': 'Other ({{count}})',
 
     'auth.checking_status_title': 'Checking sign-in status',
     'auth.checking_status_body': 'Checking your current sign-in status...',

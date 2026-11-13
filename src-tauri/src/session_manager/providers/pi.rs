@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::paths::get_pi_sessions_dir;
+use crate::paths::{get_omp_sessions_dir, get_pi_sessions_dir};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
@@ -14,15 +14,22 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "pi";
+const OMP_PROVIDER_ID: &str = "omp";
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_pi_sessions_dir();
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+    scan_sessions_for(PROVIDER_ID, get_pi_sessions_dir())
+}
 
+pub fn scan_omp_sessions() -> Vec<SessionMeta> {
+    scan_sessions_for(OMP_PROVIDER_ID, get_omp_sessions_dir())
+}
+
+fn scan_sessions_for(provider_id: &str, root: PathBuf) -> Vec<SessionMeta> {
+    let mut files = Vec::new();
+    collect_jsonl_files(provider_id, &root, &mut files);
     files
         .into_iter()
-        .filter_map(|path| parse_session(&path))
+        .filter_map(|path| parse_session(&path, provider_id))
         .collect()
 }
 
@@ -252,24 +259,45 @@ fn format_pi_arguments(arguments: Option<&Value>) -> String {
     serde_json::to_string_pretty(arguments).unwrap_or_default()
 }
 
-pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-    let meta = parse_session(path)
-        .ok_or_else(|| format!("Failed to parse Pi session metadata: {}", path.display()))?;
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    delete_session_for(PROVIDER_ID, root, path, session_id)
+}
+
+pub fn delete_omp_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    delete_session_for(OMP_PROVIDER_ID, root, path, session_id)
+}
+
+fn delete_session_for(
+    provider_id: &str,
+    _root: &Path,
+    path: &Path,
+    session_id: &str,
+) -> Result<bool, String> {
+    let meta = parse_session(path, provider_id).ok_or_else(|| {
+        format!(
+            "Failed to parse {provider_id} session metadata: {}",
+            path.display()
+        )
+    })?;
 
     if meta.session_id != session_id {
         return Err(format!(
-            "Pi session ID mismatch: expected {session_id}, found {}",
+            "{provider_id} session ID mismatch: expected {session_id}, found {}",
             meta.session_id
         ));
     }
 
-    std::fs::remove_file(path)
-        .map_err(|e| format!("Failed to delete Pi session file {}: {e}", path.display()))?;
+    std::fs::remove_file(path).map_err(|e| {
+        format!(
+            "Failed to delete {provider_id} session file {}: {e}",
+            path.display()
+        )
+    })?;
 
     Ok(true)
 }
 
-fn parse_session(path: &Path) -> Option<SessionMeta> {
+fn parse_session(path: &Path, provider_id: &str) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 40, 30).ok()?;
 
     let mut session_id = None;
@@ -326,9 +354,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let title = title.or_else(|| project_dir.as_deref().and_then(path_basename));
     let summary = summary.map(|text| truncate_summary(&text, 160));
 
+    let resume_command =
+        (provider_id == OMP_PROVIDER_ID).then(|| format!("omp --resume {session_id}"));
+
     Some(SessionMeta {
-        provider_id: PROVIDER_ID.to_string(),
-        session_id: session_id.clone(),
+        provider_id: provider_id.to_string(),
+        session_id,
         title,
         summary,
         project_dir: project_dir.clone(),
@@ -337,7 +368,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: None,
+        resume_command,
     })
 }
 
@@ -435,7 +466,7 @@ fn parse_pi_timestamp_value(value: &Value) -> Option<i64> {
     }
 }
 
-fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
+fn collect_jsonl_files(provider_id: &str, root: &Path, files: &mut Vec<PathBuf>) {
     if !root.exists() {
         return;
     }
@@ -443,7 +474,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(err) => {
-            log_scan_error(PROVIDER_ID, root, &err);
+            log_scan_error(provider_id, root, &err);
             return;
         }
     };
@@ -451,7 +482,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_jsonl_files(&path, files);
+            collect_jsonl_files(provider_id, &path, files);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
@@ -501,7 +532,7 @@ mod tests {
         .join("\n");
         fs::write(&path, format!("{content}\n")).expect("write pi fixture");
 
-        let meta = parse_session(&path).expect("parse session");
+        let meta = parse_session(&path, PROVIDER_ID).expect("parse session");
 
         assert_eq!(meta.provider_id, "pi");
         assert_eq!(meta.session_id, "session-1");
@@ -510,6 +541,13 @@ mod tests {
         assert_eq!(meta.created_at, Some(1_780_272_000_000));
         assert_eq!(meta.last_active_at, Some(1_780_272_001_000));
         assert_eq!(meta.title.as_deref(), Some("build provider"));
+
+        let omp_meta = parse_session(&path, OMP_PROVIDER_ID).expect("parse omp session");
+        assert_eq!(omp_meta.provider_id, "omp");
+        assert_eq!(
+            omp_meta.resume_command.as_deref(),
+            Some("omp --resume session-1")
+        );
     }
 
     #[test]

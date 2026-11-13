@@ -583,6 +583,8 @@ mod tests {
                 .join("opencode")
                 .join("storage");
             let pi_sessions = base.join(".pi").join("agent").join("sessions");
+            let omp_sessions = base.join(".omp").join("agent").join("sessions");
+            let dsh_sessions = base.join(".dsh").join("sessions");
 
             fs::create_dir_all(&claude_project).expect("create claude project");
             fs::create_dir_all(&codex_sessions).expect("create codex root");
@@ -590,6 +592,8 @@ mod tests {
             fs::create_dir_all(&openclaw_agents).expect("create openclaw root");
             fs::create_dir_all(&opencode_storage).expect("create opencode root");
             fs::create_dir_all(&pi_sessions).expect("create pi root");
+            fs::create_dir_all(&omp_sessions).expect("create omp root");
+            fs::create_dir_all(&dsh_sessions).expect("create dsh root");
 
             let source_path = claude_project.join("session-claude-1.jsonl");
 
@@ -610,6 +614,8 @@ mod tests {
                     opencode_storage.to_string_lossy().as_ref(),
                 ),
                 ("ACLIV_PI_DIR", pi_sessions.to_string_lossy().as_ref()),
+                ("ACLIV_OMP_DIR", omp_sessions.to_string_lossy().as_ref()),
+                ("ACLIV_DSH_DIR", dsh_sessions.to_string_lossy().as_ref()),
             ]);
 
             let fixture = Self {

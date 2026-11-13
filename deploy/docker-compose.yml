@@ -21,6 +21,8 @@ services:
       - ACLIV_OPENCLAW_DIR=/host-data/openclaw/agents
       - ACLIV_OPENCODE_DIR=/host-data/opencode/storage
       - ACLIV_PI_DIR=/host-data/pi/agent/sessions
+      - ACLIV_OMP_DIR=/host-data/omp/agent/sessions
+      - ACLIV_DSH_DIR=/host-data/dsh/sessions
       - ACLIV_RUN_AS_ROOT=${ACLIV_RUN_AS_ROOT:-0}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
@@ -31,6 +33,8 @@ services:
       - ${OPENCLAW_DIR:-./empty/openclaw}:/host-data/openclaw:ro
       - ${OPENCODE_DIR:-./empty/opencode}:/host-data/opencode:ro
       - ${PI_DIR:-./empty/pi}:/host-data/pi:ro
+      - ${OMP_DIR:-./empty/omp}:/host-data/omp:ro
+      - ${DSH_DIR:-./empty/dsh}:/host-data/dsh:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:17860/api/health"]
       interval: 30s

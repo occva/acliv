@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PROVIDERS: [ProviderDefinition; 6] = [
+const PROVIDERS: [ProviderDefinition; 8] = [
     ProviderDefinition {
         id: "claude",
         name: "Claude",
@@ -51,6 +51,22 @@ const PROVIDERS: [ProviderDefinition; 6] = [
         env_var: "ACLIV_PI_DIR",
         hidden_dir_name: ".pi",
         data_subdir: "agent/sessions",
+        default_kind: ProviderDefaultKind::HomeHidden,
+    },
+    ProviderDefinition {
+        id: "omp",
+        name: "OMP",
+        env_var: "ACLIV_OMP_DIR",
+        hidden_dir_name: ".omp",
+        data_subdir: "agent/sessions",
+        default_kind: ProviderDefaultKind::HomeHidden,
+    },
+    ProviderDefinition {
+        id: "dsh",
+        name: "DSH",
+        env_var: "ACLIV_DSH_DIR",
+        hidden_dir_name: ".dsh",
+        data_subdir: "sessions",
         default_kind: ProviderDefaultKind::HomeHidden,
     },
 ];
@@ -335,6 +351,16 @@ pub fn get_opencode_storage_dir() -> PathBuf {
 pub fn get_pi_sessions_dir() -> PathBuf {
     get_provider_base_dir("pi")
         .unwrap_or_else(|_| resolve_provider_dir("ACLIV_PI_DIR", ".pi", "agent/sessions"))
+}
+
+pub fn get_omp_sessions_dir() -> PathBuf {
+    get_provider_base_dir("omp")
+        .unwrap_or_else(|_| resolve_provider_dir("ACLIV_OMP_DIR", ".omp", "agent/sessions"))
+}
+
+pub fn get_dsh_sessions_dir() -> PathBuf {
+    get_provider_base_dir("dsh")
+        .unwrap_or_else(|_| resolve_provider_dir("ACLIV_DSH_DIR", ".dsh", "sessions"))
 }
 
 pub fn get_provider_base_dir(provider_id: &str) -> Result<PathBuf, String> {

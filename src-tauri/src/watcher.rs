@@ -16,7 +16,9 @@ use crate::search_index;
 use crate::search_index::types::IndexedSourceRef;
 
 const SEARCH_INDEX_SYNC_EVENT: &str = "search-index-sync";
-const PROVIDERS: [&str; 6] = ["claude", "codex", "gemini", "openclaw", "opencode", "pi"];
+const PROVIDERS: [&str; 8] = [
+    "claude", "codex", "gemini", "openclaw", "opencode", "pi", "omp", "dsh",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

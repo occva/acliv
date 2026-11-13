@@ -12,7 +12,9 @@ use super::tokenizer;
 use super::types::{RebuildSearchIndexResult, RefreshSearchIndexResult, SearchIndexChangeStatus};
 use super::{SyncProgress, SyncProgressPhase};
 
-const PROVIDERS: [&str; 6] = ["claude", "codex", "gemini", "openclaw", "opencode", "pi"];
+const PROVIDERS: [&str; 8] = [
+    "claude", "codex", "gemini", "openclaw", "opencode", "pi", "omp", "dsh",
+];
 
 pub fn rebuild_index(connection: &mut Connection) -> Result<RebuildSearchIndexResult, String> {
     let sessions = session_manager::scan_sessions();
@@ -889,6 +891,8 @@ fn provider_bucket(provider_id: &str) -> &'static str {
         "openclaw" => "OpenClaw Sessions",
         "opencode" => "OpenCode Sessions",
         "pi" => "Pi Sessions",
+        "omp" => "OMP Sessions",
+        "dsh" => "DSH Sessions",
         _ => "Unknown Sessions",
     }
 }

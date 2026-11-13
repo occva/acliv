@@ -134,12 +134,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Sync release version
-        shell: pwsh
-        run: ./scripts/sync-version.ps1 -Version ${{ steps.version.outputs.version }}
+        run: ./scripts/sync-version.sh ${{ steps.version.outputs.version }}
 
       - name: Run release checks
-        shell: pwsh
-        run: ./scripts/check.ps1 -Scope release
+        run: ./scripts/check.sh --scope release
 
       - name: Verify updater signing secrets
         shell: bash

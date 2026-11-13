@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "acliv"
-version = "1.0.15"
+version = "1.0.16"
 dependencies = [
  "axum",
  "chrono",
@@ -27,6 +27,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower-http 0.5.2",
+ "zstd",
 ]
 
 [[package]]

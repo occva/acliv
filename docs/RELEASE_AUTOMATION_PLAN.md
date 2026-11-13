@@ -62,27 +62,22 @@
 
 ### 3.1 本地脚本层
 
-新增 3 个脚本，作为标准入口：
+Windows 保留 PowerShell 入口：
 
 - `scripts/check.ps1`
 - `scripts/build-release.ps1`
 - `scripts/publish-release.ps1`
 
-职责固定为：
+macOS 使用原生 Bash 入口，不要求安装 PowerShell：
 
-- `check.ps1`
-  - 只做检查
-  - 不改 repo 文件
-- `build-release.ps1`
-  - 做版本同步
-  - 清理旧构建
-  - 重新构建
-  - 复制产物
-  - 生成 release note
-- `publish-release.ps1`
-  - 做 tag
-  - 做 push
-  - 做 GitHub Release 上传
+- `scripts/check.sh`
+- `scripts/sync-version.sh`
+- `scripts/assert-version.sh`
+- `scripts/assert-release-notes.sh`
+- `scripts/build-release-macos.sh`
+- `scripts/publish-release.sh`
+
+两套入口共享相同约束：版本文件必须一致、发布说明必须人工确认、正式发布只推送 `v<version>` 标签，所有正式资产由 GitHub Actions 构建并上传。本地构建产物只用于验证。
 
 ### 3.2 Git hook 层
 
@@ -212,6 +207,21 @@
 - 不负责重新编译
 - `publish-release.ps1` 只负责推送 `v<version>` tag；正式产物全部由 GitHub Actions 构建并上传
 
+### 4.4 macOS 原生 Bash 入口
+
+```bash
+./scripts/check.sh --scope release
+./scripts/sync-version.sh <x.y.z>
+./scripts/build-release-macos.sh --version <x.y.z>
+./scripts/publish-release.sh --version <x.y.z>
+```
+
+`build-release-macos.sh` 只在 macOS 运行，生成当前架构的 DMG 与 updater tarball。它需要 `TAURI_SIGNING_PRIVATE_KEY`，或通过 `TAURI_SIGNING_PRIVATE_KEY_PATH`/`~/.acliv/tauri-updater.key` 读取本地 updater 签名密钥。
+
+无本地 updater 私钥时，可加 `--unsigned` 只构建 DMG 做本地演练。该模式不生成 updater tarball/签名，产物不得上传；正式发布仍由 GitHub Actions 使用 Secret 完成签名构建。
+
+Git hooks 调用 Bash 检查脚本，因此 macOS 开发环境无需安装 PowerShell。Windows CI 和本地发布仍可继续使用原有 PowerShell 入口。
+
 ## 5. Hook 规则
 
 ### 5.1 `pre-commit`
@@ -326,12 +336,12 @@ release body 来源：
 
 实现完成后，至少满足以下场景：
 
-- 修改前端后提交，`pre-commit` 会跑 `svelte-check`
+- 修改前端后提交，`pre-commit` 会跑跨平台 `svelte-check`
 - 修改 Rust 后提交，`pre-commit` 会跑 `cargo check`
-- 误提交 `release/*.exe` 或 `dist/*` 会被拦截
-- `scripts/check.ps1 -Scope release` 全通过
-- `scripts/build-release.ps1 -Version 1.0.3` 能产出本地发布包
-- `scripts/publish-release.ps1 -Version 1.0.3` 能创建并推送 tag，触发 GitHub Actions 发布
+- 误提交 `release/*.exe`、`release/*.dmg` 或 `dist/*` 会被拦截
+- Windows：`scripts/check.ps1 -Scope release` 与 `scripts/build-release.ps1 -Version 1.0.3` 可完成检查和本地构建
+- macOS：`scripts/check.sh --scope release` 与 `scripts/build-release-macos.sh --version 1.0.3` 可完成检查和本地构建
+- `scripts/publish-release.ps1` 或 `scripts/publish-release.sh` 能创建并推送 tag，触发 GitHub Actions 发布
 - `release/v1.0.3/` 目录下只保留该版本的标准命名产物，不保留临时重命名缓存
 - 推送 `v1.0.3` 后：
   - 桌面 release workflow 成功

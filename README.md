@@ -4,7 +4,7 @@
 
 功能
 
-- 支持多 Provider：`claude`、`codex`、`gemini`、`openclaw`、`opencode`、`pi`
+- 支持多 Provider：`claude`、`codex`（CLI 与 Desktop 共用）、`gemini`、`openclaw`、`opencode`、`pi`、`omp`、`dsh`
 - 会话列表统一扫描，按最近活跃时间排序
 - 点击会话按需加载消息详情
 - 支持暗色/亮色主题切换
@@ -68,11 +68,25 @@ npm exec tauri build -- --no-bundle
 
 发布打包：
 
+Windows（PowerShell）：
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>
 ```
+
+macOS（原生 Bash）：
+
+```bash
+./scripts/check.sh --scope release
+./scripts/build-release-macos.sh --version <x.y.z>
+./scripts/publish-release.sh --version <x.y.z>
+```
+
+没有本地 updater 私钥时，可用 `./scripts/build-release-macos.sh --version <x.y.z> --unsigned` 只验证 DMG；该产物不得用于正式发布。
+
+本地构建产物只用于验证；正式 Windows/macOS 资产由版本标签触发 GitHub Actions 构建并上传。
 
 ## Linux 部署
 
@@ -124,7 +138,7 @@ ACLIV_WEB_AUTH_ENABLED=0
 │   ├── web/                      # Web server 独立 Cargo manifest
 │   │   ├── session_manager/      # 统一 provider 扫描与消息读取
 │   │   │   ├── mod.rs
-│   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode/pi
+│   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode/pi/omp/dsh
 │   │   └── search_index/         # SQLite 全文索引、查询与状态管理
 │   │       ├── mod.rs
 │   │       ├── indexer.rs
