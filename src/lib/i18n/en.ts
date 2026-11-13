@@ -43,6 +43,7 @@ export const en = {
     'actions.open_in_explorer': 'Open in File Explorer',
     'actions.open_in_finder': 'Open in Finder',
     'actions.open_in_terminal': 'Open in terminal',
+    'actions.resize_sidebar': 'Resize sidebar',
 
     'about.title': 'About',
     'about.subtitle': 'ACLIV version and updates',
@@ -158,6 +159,8 @@ export const en = {
     'detail.user_message': 'User message',
     'detail.empty_progress': '(empty)',
     'detail.refresh_current': 'Refresh current conversation',
+    'detail.hide_process': 'Show final answers only',
+    'detail.show_process': 'Show thinking and tool calls',
     'detail.delete_confirm_title': 'Delete session?',
     'detail.delete_confirm_body': 'This will permanently remove {{title}} and its provider-side session files.',
 

@@ -30,7 +30,6 @@
     database: `<path d="M8 1.25c-3.59 0-5.75 1.16-5.75 2.5v8.5c0 1.34 2.16 2.5 5.75 2.5s5.75-1.16 5.75-2.5v-8.5c0-1.34-2.16-2.5-5.75-2.5Zm0 1.5c2.91 0 4.25.84 4.25 1s-1.34 1-4.25 1-4.25-.84-4.25-1 1.34-1 4.25-1Zm-4.25 3.1c1.11.63 2.74.9 4.25.9s3.14-.27 4.25-.9v1.4c0 .16-1.34 1-4.25 1s-4.25-.84-4.25-1v-1.4Zm0 3.5c1.11.63 2.74.9 4.25.9s3.14-.27 4.25-.9v1.4c0 .16-1.34 1-4.25 1s-4.25-.84-4.25-1v-1.4Zm4.25 3.9c-2.91 0-4.25-.84-4.25-1v-1.4c1.11.63 2.74.9 4.25.9s3.14-.27 4.25-.9v1.4c0 .16-1.34 1-4.25 1Z"/>`,
     refresh: `<path fill-rule="evenodd" d="M8 2.25a5.75 5.75 0 1 0 5.527 7.344.75.75 0 0 1 1.444.402A7.25 7.25 0 1 1 13.11 3.57v-1.32a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h1.717A5.715 5.715 0 0 0 8 2.25Z"/>`,
     info: `<path fill-rule="evenodd" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM2.5 8a5.5 5.5 0 1 1 11 0A5.5 5.5 0 0 1 2.5 8ZM8 6.75a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 6.75ZM8 5.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"/>`,
-    back: `<svg viewBox="0 0 1024 1024" width="14" height="14" fill="currentColor"><path d="M604.8 407.68H158.72L375.68 198.4c17.92-17.28 17.92-46.08 0-63.36a48.384 48.384 0 0 0-65.92 0L13.44 421.12c-17.92 17.28-17.92 46.08 0 63.36l296.32 286.08c17.92 17.28 47.36 17.28 65.92 0 17.92-17.28 17.92-46.08 0-63.36L158.72 497.92h446.08c179.84 0 325.76 140.8 325.76 314.88v44.8c0 24.96 21.12 44.8 46.72 44.8 25.6 0 46.72-20.48 46.72-44.8v-44.8c0-224-187.52-405.12-419.2-405.12z"></path></svg>`,
     dropdown_arrow: `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M12.78 6.22a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 7.28a.75.75 0 0 1 1.06-1.06L8 9.94l3.72-3.72a.75.75 0 0 1 1.06 0Z"></path></svg>`
   };
 
@@ -152,6 +151,22 @@
   const SOURCE_STORAGE_KEY = 'source';
   const PROJECT_LIST_PATH_MODE_STORAGE_KEY = 'acliv:project-list-path-mode';
   const SESSION_ID_VISIBILITY_STORAGE_KEY = 'acliv:show-session-ids';
+  const PROCESS_DETAILS_STORAGE_KEY = 'acliv:show-process-details';
+  const SIDEBAR_WIDTH_STORAGE_KEY = 'acliv:sidebar-width';
+  const SIDEBAR_DEFAULT_WIDTH = 288;
+  const SIDEBAR_MIN_WIDTH = 220;
+  const SIDEBAR_MAX_WIDTH = 420;
+
+  function clampSidebarWidth(value: number, max = SIDEBAR_MAX_WIDTH): number {
+      return Math.min(Math.max(value, SIDEBAR_MIN_WIDTH), max);
+  }
+
+  function getStoredSidebarWidth(): number {
+      const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+      return Number.isFinite(stored) && stored > 0
+          ? clampSidebarWidth(stored)
+          : SIDEBAR_DEFAULT_WIDTH;
+  }
   const APP_VERSION = import.meta.env.VITE_APP_VERSION || '1.0.13';
   let locale = $state<Locale>(getInitialLocale());
 
@@ -401,10 +416,15 @@
       query: string;
   } | null>(null);
   let hideFunctionCalls = $state(false);
+  let showProcessDetails = $state(localStorage.getItem(PROCESS_DETAILS_STORAGE_KEY) !== 'hidden');
   let compactProjectPaths = $state(localStorage.getItem(PROJECT_LIST_PATH_MODE_STORAGE_KEY) !== 'full');
   let showSessionIds = $state(localStorage.getItem(SESSION_ID_VISIBILITY_STORAGE_KEY) !== 'hidden');
   let isSourceDropdownOpen = $state(false);
   let theme = $state(localStorage.getItem('theme') || 'dark');
+  let sidebarWidth = $state(getStoredSidebarWidth());
+  let isSidebarResizing = $state(false);
+  let sidebarResizeStartX = 0;
+  let sidebarResizeStartWidth = SIDEBAR_DEFAULT_WIDTH;
   let isLoading = $state(false);
   let isRefreshing = $state(false);
   let isDeleting = $state(false);
@@ -1097,6 +1117,7 @@
   });
 
   onDestroy(() => {
+    document.body.classList.remove('sidebar-resizing');
     if (autoRefreshInterval) clearInterval(autoRefreshInterval);
     if (searchTimer) clearTimeout(searchTimer);
     if (watcherReloadTimer) clearTimeout(watcherReloadTimer);
@@ -1689,7 +1710,17 @@
           || kind === 'tool_use'
           || kind === 'tool_result';
   }
+  function isFinalAnswerBlock(block: MessageBlock): boolean {
+      if (block.kind !== 'message' || isInstructionContextBlock(block)) return false;
+      const role = block.role.toLowerCase();
+      return role === 'user' || role === 'human' || role === 'assistant';
+  }
+
   function getVisibleConversationBlocks(blocks: MessageBlock[]): MessageBlock[] {
+      if (!showProcessDetails) {
+          return blocks.filter(isFinalAnswerBlock);
+      }
+
       if (hideFunctionCalls) {
           return blocks.filter(block => !isFunctionCallLikeBlock(block));
       }
@@ -1933,6 +1964,12 @@
 
   function getConversationProgressAnchorTop(index: number): string {
       return `${DETAIL_PROGRESS_ANCHOR_OFFSET + index * DETAIL_PROGRESS_ANCHOR_SPACING}px`;
+  }
+
+  function getConversationProgressMarkWidth(anchor: ConversationProgressAnchor): string {
+      const contentLength = Array.from(anchor.label.trim()).length;
+      const width = Math.ceil(contentLength / 2);
+      return `${Math.min(Math.max(width, 8), 24)}px`;
   }
 
   function openConversationProgressDirectory() {
@@ -2197,6 +2234,11 @@
   function toggleHideFunctionCalls() {
       hideFunctionCalls = !hideFunctionCalls;
   }
+  function toggleProcessDetails() {
+      showProcessDetails = !showProcessDetails;
+      localStorage.setItem(PROCESS_DETAILS_STORAGE_KEY, showProcessDetails ? 'shown' : 'hidden');
+      void tick().then(scheduleConversationProgressUpdate);
+  }
   function toggleCompactProjectPaths() {
       compactProjectPaths = !compactProjectPaths;
       localStorage.setItem(PROJECT_LIST_PATH_MODE_STORAGE_KEY, compactProjectPaths ? 'compact' : 'full');
@@ -2218,6 +2260,55 @@
       currentConversation = null;
       goToConversationList('replace');
       refreshFromSessions();
+  }
+  function currentSidebarMaxWidth(): number {
+      return Math.max(
+          SIDEBAR_MIN_WIDTH,
+          Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - 520),
+      );
+  }
+
+  function persistSidebarWidth() {
+      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(sidebarWidth)));
+  }
+
+  function startSidebarResize(event: PointerEvent) {
+      if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      sidebarResizeStartX = event.clientX;
+      sidebarResizeStartWidth = sidebarWidth;
+      isSidebarResizing = true;
+      document.body.classList.add('sidebar-resizing');
+  }
+
+  function updateSidebarResize(event: PointerEvent) {
+      if (!isSidebarResizing) return;
+      const delta = event.clientX - sidebarResizeStartX;
+      sidebarWidth = clampSidebarWidth(sidebarResizeStartWidth + delta, currentSidebarMaxWidth());
+  }
+
+  function finishSidebarResize(event: PointerEvent) {
+      if (!isSidebarResizing) return;
+      if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      isSidebarResizing = false;
+      document.body.classList.remove('sidebar-resizing');
+      persistSidebarWidth();
+  }
+
+  function handleSidebarResizeKeydown(event: KeyboardEvent) {
+      let nextWidth = sidebarWidth;
+      if (event.key === 'ArrowLeft') nextWidth -= 16;
+      else if (event.key === 'ArrowRight') nextWidth += 16;
+      else if (event.key === 'Home') nextWidth = SIDEBAR_MIN_WIDTH;
+      else if (event.key === 'End') nextWidth = currentSidebarMaxWidth();
+      else return;
+
+      event.preventDefault();
+      sidebarWidth = clampSidebarWidth(nextWidth, currentSidebarMaxWidth());
+      persistSidebarWidth();
   }
   function buildMetadataSearchResults(query: string, source = currentSource): SearchResultLocal[] {
       const results = allSessions
@@ -2535,7 +2626,11 @@
       }
   }
 
-  function handleWindowClick() {
+  function handleWindowClick(event: MouseEvent) {
+      const target = event.target;
+      if (isSourceDropdownOpen && target instanceof Node && !document.querySelector('.provider-menu')?.contains(target)) {
+          isSourceDropdownOpen = false;
+      }
       if (isProjectMenuOpen) {
           isProjectMenuOpen = false;
       }
@@ -2554,6 +2649,10 @@
       const allowNavigation = options.allowNavigation ?? true;
       if (isSearchModalOpen) {
           closeSearch();
+          return true;
+      }
+      if (isSourceDropdownOpen) {
+          isSourceDropdownOpen = false;
           return true;
       }
       if (isIndexProviderDropdownOpen) {
@@ -2767,6 +2866,18 @@
       return null;
   }
 
+  function providerIconSrc(source: string): string {
+      const filenames: Record<string, string> = {
+          claude: 'claude-code.png',
+          codex: 'codex.png',
+          gemini: 'gemini.png',
+          openclaw: 'openclaw.png',
+          opencode: theme === 'dark' ? 'opencode.png' : 'opencode-light.png',
+          pi: theme === 'dark' ? 'pi.png' : 'pi-light.png',
+      };
+      return `./brands/${filenames[source] ?? 'claude-code.png'}`;
+  }
+
   const sourceLabel = $derived(({
       'claude': 'Claude CLI',
       'codex': 'Codex CLI',
@@ -2788,15 +2899,6 @@
   const indexSessionPreviewCount = $derived(indexLibraryItems.length);
   const indexLibraryPageCount = $derived(
       Math.max(1, Math.ceil(indexLibraryTotalCount / INDEX_LIBRARY_PAGE_SIZE)),
-  );
-  const indexLibraryRangeText = $derived(
-      indexLibraryTotalCount === 0
-          ? t('index.range_empty')
-          : t('index.range_value', {
-              start: (indexLibraryPage - 1) * INDEX_LIBRARY_PAGE_SIZE + 1,
-              end: Math.min(indexLibraryPage * INDEX_LIBRARY_PAGE_SIZE, indexLibraryTotalCount),
-              total: indexLibraryTotalCount,
-            }),
   );
   const indexPaginationText = $derived(
       t('index.page_info', {
@@ -2856,31 +2958,9 @@
   </div>
 </div>
 {:else}
-<div class="app-container">
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <div class="source-selector">
-        <button class="source-toggle" class:active={isSourceDropdownOpen} onclick={() => isSourceDropdownOpen = !isSourceDropdownOpen} type="button">
-            <span class="source-title">{sourceLabel}</span>
-            <span class="dropdown-arrow">{@html ICONS.dropdown_arrow}</span>
-        </button>
-        
-        <div class="source-dropdown" class:show={isSourceDropdownOpen}>
-            {#each sources as src}
-                <button class="source-item" class:selected={currentSource === src} onclick={() => selectSource(src)} type="button">
-                    {providerDisplayName(src)}
-                </button>
-            {/each}
-        </div>
-      </div>
-      
-      <div class="stats" id="stats">
-        <span>{@html getIcon('project', 14)} {stats.projects_count}</span>
-        <span>{@html getIcon('conversation', 14)} {stats.conversations_count}</span>
-        <span>{@html getIcon('message', 14)} {stats.messages_count}</span>
-      </div>
-    </div>
-
+<div class="app-container" style={`--sidebar-current-width: ${sidebarWidth}px`}>
+  <div class="window-drag-region" data-tauri-drag-region aria-hidden="true"></div>
+  <aside class="sidebar" style={`width: ${sidebarWidth}px`}>
     <div class="sidebar-content" id="projectsList">
         <div class="projects-list">
             {#each projects as project}
@@ -2901,7 +2981,92 @@
             {/each}
         </div>
     </div>
+
+    <div class="sidebar-header">
+      <div class="source-selector provider-menu">
+        <div class="source-dropdown provider-menu-popover" class:show={isSourceDropdownOpen} role="menu" aria-label={t('common.provider')}>
+            <div class="provider-menu-header">
+                <span class="provider-avatar provider-avatar-large" aria-hidden="true"><img src={providerIconSrc(currentSource)} alt="" /></span>
+                <span class="provider-menu-heading">
+                    <strong>{sourceLabel}</strong>
+                    <small>{t('common.provider')}</small>
+                </span>
+            </div>
+
+            <div class="provider-menu-stats" aria-label={t('common.provider')}>
+                <span class="provider-menu-stat">
+                    <strong>{stats.projects_count}</strong>
+                    <small>{t('index.projects')}</small>
+                </span>
+                <span class="provider-menu-stat">
+                    <strong>{stats.conversations_count}</strong>
+                    <small>{t('index.sessions')}</small>
+                </span>
+                <span class="provider-menu-stat">
+                    <strong>{stats.messages_count}</strong>
+                    <small>{t('index.messages')}</small>
+                </span>
+            </div>
+
+            <div class="provider-menu-label">{t('common.provider')}</div>
+            <div class="provider-menu-options">
+                {#each sources as src}
+                    <button
+                        class="source-item provider-option"
+                        class:selected={currentSource === src}
+                        onclick={() => selectSource(src)}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={currentSource === src}
+                    >
+                        <span class="provider-option-avatar" aria-hidden="true"><img src={providerIconSrc(src)} alt="" /></span>
+                        <span class="provider-option-copy">{providerDisplayName(src)}</span>
+                        {#if currentSource === src}
+                            <span class="provider-option-check" aria-hidden="true">✓</span>
+                        {/if}
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        <button
+            class="source-toggle provider-menu-trigger"
+            class:active={isSourceDropdownOpen}
+            aria-expanded={isSourceDropdownOpen}
+            aria-haspopup="menu"
+            onclick={() => isSourceDropdownOpen = !isSourceDropdownOpen}
+            type="button"
+        >
+            <span class="provider-avatar" aria-hidden="true"><img src={providerIconSrc(currentSource)} alt="" /></span>
+            <span class="provider-trigger-copy">
+                <strong>{sourceLabel}</strong>
+                <small>{t('common.count.sessions', { count: stats.conversations_count })} · {t('common.count.messages', { count: stats.messages_count })}</small>
+            </span>
+            <span class="dropdown-arrow">{@html ICONS.dropdown_arrow}</span>
+        </button>
+      </div>
+    </div>
   </aside>
+
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+      class="sidebar-resizer"
+      class:active={isSidebarResizing}
+      role="separator"
+      aria-label={t('actions.resize_sidebar')}
+      aria-orientation="vertical"
+      aria-valuemin={SIDEBAR_MIN_WIDTH}
+      aria-valuemax={SIDEBAR_MAX_WIDTH}
+      aria-valuenow={Math.round(sidebarWidth)}
+      tabindex="0"
+      onpointerdown={startSidebarResize}
+      onpointermove={updateSidebarResize}
+      onpointerup={finishSidebarResize}
+      onpointercancel={finishSidebarResize}
+      onlostpointercapture={finishSidebarResize}
+      onkeydown={handleSidebarResizeKeydown}
+  ></div>
 
   <main class="main-content">
      <div class="view" class:active={currentView === 'list'} id="listView">
@@ -2954,11 +3119,24 @@
      <div class="view" class:active={currentView === 'detail'} id="detailView">
      <div class="view-header">
              <button class="btn-secondary" id="backBtn" onclick={() => goToConversationList()} type="button">
-                 {@html ICONS.back} {t('actions.back')}
+                 {t('actions.back')}
              </button>
               <h2>{selectedSession ? sessionTitle(selectedSession) : currentConversation?.title || t('common.conversation')}</h2>
              {#if currentConversation}
                  <div class="view-header-actions">
+                     <button
+                        class="action-btn process-toggle-btn"
+                        class:collapsed={!showProcessDetails}
+                        onclick={toggleProcessDetails}
+                        type="button"
+                        aria-pressed={!showProcessDetails}
+                        aria-label={showProcessDetails ? t('detail.hide_process') : t('detail.show_process')}
+                        title={showProcessDetails ? t('detail.hide_process') : t('detail.show_process')}
+                     >
+                        <span class="process-toggle-icon" class:expanded={showProcessDetails} aria-hidden="true">
+                            {@html ICONS.dropdown_arrow}
+                        </span>
+                     </button>
                      <button class="action-btn" onclick={openSearch} type="button">
                         {@html getIcon('search', 16)}
                      </button>
@@ -3144,9 +3322,24 @@
                                         {#if block.timestamp}
                                             <span class="message-ts">{block.timestamp}</span>
                                         {/if}
+                                        {#if block.kind === 'thinking'}
+                                            <button
+                                                class="inline-icon-btn message-copy-btn"
+                                                onclick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    void copyText(block.content, keyMessage('toast.message_copied'));
+                                                }}
+                                                type="button"
+                                                title={t('detail.copy_message')}
+                                            >
+                                                {@html getIcon('copy', 14)}
+                                            </button>
+                                        {/if}
                                     </div>
                                 </summary>
                                 <div class="message-collapsible-body">
+                                    {#if block.kind !== 'thinking'}
                                     <div class="message-collapsible-meta-row">
                                         {#if block.callId}
                                             <div class="tool-call-meta">{t('detail.call_id')}: {block.callId}</div>
@@ -3160,6 +3353,7 @@
                                             {@html getIcon('copy', 14)}
                                         </button>
                                     </div>
+                                    {/if}
                                     {#if isRawTextBlock(block)}
                                         <pre class="message-content message-raw-content">{block.content}</pre>
                                     {:else if MarkdownComponent}
@@ -3228,7 +3422,7 @@
                     <button
                         class="detail-progress-anchor detail-progress-mark"
                         class:active={anchor.key === activeConversationProgressKey}
-                        style={`top: ${getConversationProgressAnchorTop(index)}`}
+                        style={`top: ${getConversationProgressAnchorTop(index)}; --progress-mark-width: ${getConversationProgressMarkWidth(anchor)}`}
                         type="button"
                         aria-label={anchor.label}
                         onclick={() => jumpToConversationProgressAnchor(anchor)}
@@ -3546,14 +3740,6 @@
               </div>
           {:else if indexModalTab === 'providers'}
               <div class="provider-path-section">
-                  <div class="index-library-header">
-                      <div>
-                          <h4>{t('index.provider_paths')}</h4>
-                          <p>{t('index.provider_paths_hint')}</p>
-                      </div>
-                      <span class="view-info">{isWebMode ? t('index.web_server_paths') : t('index.desktop_paths')}</span>
-                  </div>
-
                   <div class="provider-path-list">
                       {#if isProviderPathsLoading}
                           <div class="index-library-empty">{t('index.loading_provider_paths')}</div>
@@ -3733,14 +3919,6 @@
               </div>
           {:else}
               <div class="index-library-section">
-                  <div class="index-library-header">
-                      <div>
-                          <h4>{t('index.indexed_sessions')}</h4>
-                          <p>{t('index.open_hint')}</p>
-                      </div>
-                      <span class="view-info">{indexLibraryRangeText}</span>
-                  </div>
-
                   <div class="index-library-filters">
                       <div class="index-filter-field">
                           <span>{t('common.provider')}</span>

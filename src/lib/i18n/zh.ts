@@ -45,6 +45,7 @@ const zh: Record<TranslationKey, string> = {
     'actions.open_in_explorer': '在文件管理器打开',
     'actions.open_in_finder': '在访达打开',
     'actions.open_in_terminal': '在终端打开',
+    'actions.resize_sidebar': '调整侧栏宽度',
 
     'about.title': '关于',
     'about.subtitle': 'ACLIV 版本与更新',
@@ -160,6 +161,8 @@ const zh: Record<TranslationKey, string> = {
     'detail.user_message': '用户消息',
     'detail.empty_progress': '（空）',
     'detail.refresh_current': '刷新当前会话',
+    'detail.hide_process': '只看最终回答',
+    'detail.show_process': '显示思考和工具调用',
     'detail.delete_confirm_title': '删除会话？',
     'detail.delete_confirm_body': '这会永久删除 {{title}} 及其 provider 侧会话文件。',
 
