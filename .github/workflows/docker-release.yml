@@ -6,10 +6,19 @@ on:
       - master
     tags:
       - "v*"
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "assets/screenshots/**"
+    paths:
+      - ".github/workflows/docker-release.yml"
+      - ".dockerignore"
+      - "deploy/**"
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "svelte.config.js"
+      - "tsconfig.json"
+      - "vite.config.ts"
+      - "public/**"
+      - "src/**"
+      - "src-tauri/**"
   workflow_dispatch:
     inputs:
       version:
