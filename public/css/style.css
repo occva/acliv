@@ -765,6 +765,10 @@ body.sidebar-resizing * {
     border-color: color-mix(in srgb, var(--accent-blue) 24%, var(--border-color));
 }
 
+.messages-container.process-details-hidden > .process-detail {
+    display: none;
+}
+
 /* Search Modal */
 .search-modal,
 .index-modal,

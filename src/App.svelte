@@ -421,7 +421,10 @@
       query: string;
   } | null>(null);
   let hideFunctionCalls = $state(false);
-  let showProcessDetails = $state(localStorage.getItem(PROCESS_DETAILS_STORAGE_KEY) !== 'hidden');
+  const initialShowProcessDetails = localStorage.getItem(PROCESS_DETAILS_STORAGE_KEY) !== 'hidden';
+  let showProcessDetails = $state(initialShowProcessDetails);
+  let renderedProcessDetails = $state(initialShowProcessDetails);
+  let hasMountedProcessDetails = $state(initialShowProcessDetails);
   let compactProjectPaths = $state(localStorage.getItem(PROJECT_LIST_PATH_MODE_STORAGE_KEY) !== 'full');
   let showSessionIds = $state(localStorage.getItem(SESSION_ID_VISIBILITY_STORAGE_KEY) !== 'hidden');
   let isSourceDropdownOpen = $state(false);
@@ -482,6 +485,7 @@
   let isConversationProgressExpanded = $state(false);
   let conversationProgressResizeObserver: ResizeObserver | null = null;
   let conversationProgressFrame = 0;
+  let processDetailsTimer: ReturnType<typeof setTimeout> | null = null;
 
   function hasStoredWebToken(): boolean {
     if (!isWebMode) return false;
@@ -1128,6 +1132,7 @@
     if (searchTimer) clearTimeout(searchTimer);
     if (watcherReloadTimer) clearTimeout(watcherReloadTimer);
     if (conversationProgressFrame) cancelAnimationFrame(conversationProgressFrame);
+    if (processDetailsTimer) clearTimeout(processDetailsTimer);
     conversationProgressResizeObserver?.disconnect();
     countJobToken++;
     for (const unlisten of searchIndexEventUnsubscribers) {
@@ -1722,8 +1727,8 @@
       return role === 'user' || role === 'human' || role === 'assistant';
   }
 
-  function getVisibleConversationBlocks(blocks: MessageBlock[]): MessageBlock[] {
-      if (!showProcessDetails) {
+  function getMountedConversationBlocks(blocks: MessageBlock[]): MessageBlock[] {
+      if (!hasMountedProcessDetails) {
           return blocks.filter(isFinalAnswerBlock);
       }
 
@@ -2096,6 +2101,8 @@
         })),
       };
       void loadMarkdownRenderer();
+      renderedProcessDetails = showProcessDetails;
+      hasMountedProcessDetails = showProcessDetails;
       currentConversation = transformConversation(convLike as any);
       const matchRole = searchMatch?.match_role?.toLowerCase();
       const canHighlight = (matchRole === 'assistant' || matchRole === 'user' || matchRole === 'human')
@@ -2242,8 +2249,17 @@
   }
   function toggleProcessDetails() {
       showProcessDetails = !showProcessDetails;
-      localStorage.setItem(PROCESS_DETAILS_STORAGE_KEY, showProcessDetails ? 'shown' : 'hidden');
-      void tick().then(scheduleConversationProgressUpdate);
+
+      if (processDetailsTimer) clearTimeout(processDetailsTimer);
+      processDetailsTimer = setTimeout(() => {
+          processDetailsTimer = null;
+          if (showProcessDetails) {
+              hasMountedProcessDetails = true;
+          }
+          renderedProcessDetails = showProcessDetails;
+          localStorage.setItem(PROCESS_DETAILS_STORAGE_KEY, showProcessDetails ? 'shown' : 'hidden');
+          void tick().then(scheduleConversationProgressUpdate);
+      }, 120);
   }
   function toggleCompactProjectPaths() {
       compactProjectPaths = !compactProjectPaths;
@@ -3371,10 +3387,17 @@
                         </div>
                     {/if}
                 </div>
-                <div class="messages-container" bind:this={messagesContainerElement}>
-                    {#each getVisibleConversationBlocks(currentConversation.blocks) as block, i}
+                <div
+                    class="messages-container"
+                    class:process-details-hidden={!renderedProcessDetails}
+                    bind:this={messagesContainerElement}
+                >
+                    {#each getMountedConversationBlocks(currentConversation.blocks) as block, i}
                         {#if isToolGroupBlock(block)}
-                            <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
+                            <details
+                                class={`message message-collapsible ${getMessageBlockClass(block)}`}
+                                class:process-detail={!isFinalAnswerBlock(block)}
+                            >
                                 <summary class="tool-group-summary">
                                     <div class="tool-group-summary-main">
                                         <div class="tool-group-summary-copy">
@@ -3429,7 +3452,10 @@
                                 </div>
                             </details>
                         {:else if isCollapsibleBlock(block)}
-                            <details class={`message message-collapsible ${getMessageBlockClass(block)}`}>
+                            <details
+                                class={`message message-collapsible ${getMessageBlockClass(block)}`}
+                                class:process-detail={!isFinalAnswerBlock(block)}
+                            >
                                 <summary class="message-header">
                                     <div class="message-header-main">
                                         <span class="message-role">{getMessageBlockLabel(block)}</span>
@@ -3486,6 +3512,7 @@
                         {:else}
                             <div
                                 class={`message ${getMessageBlockClass(block)}`}
+                                class:process-detail={!isFinalAnswerBlock(block)}
                                 class:search-hit={isBlockSearchMatch(block)}
                                 data-progress-anchor={isConversationProgressBlock(block) ? 'true' : undefined}
                                 data-progress-key={isConversationProgressBlock(block) ? getConversationProgressKey(block) : undefined}
