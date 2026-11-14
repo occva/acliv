@@ -6,6 +6,10 @@ on:
       - master
     tags:
       - "v*"
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "assets/screenshots/**"
   workflow_dispatch:
     inputs:
       version:
@@ -16,6 +20,10 @@ on:
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: docker-${{ inputs.version || github.sha }}
+  cancel-in-progress: false
 
 jobs:
   docker:
@@ -83,6 +91,6 @@ jobs:
           build-args: |
             ACLIV_IMAGE_TAG=${{ steps.prep.outputs.image_tag }}
             ACLIV_BUILD_REF=${{ steps.prep.outputs.build_ref }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=acliv-web
+          cache-to: type=gha,mode=max,scope=acliv-web
           provenance: false

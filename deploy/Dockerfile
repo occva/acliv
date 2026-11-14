@@ -32,14 +32,14 @@ ENV CARGO_NET_RETRY=8 \
     CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
 COPY src-tauri/web/Cargo.toml src-tauri/web/Cargo.lock ./src-tauri/web/
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    cargo fetch --locked --manifest-path src-tauri/web/Cargo.toml
+RUN --mount=type=cache,id=acliv-cargo-registry,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=acliv-cargo-git,target=/root/.cargo/git,sharing=locked \
+    sh -ec 'mkdir -p src-tauri/web/src && printf "fn main() {}\n" > src-tauri/web/src/main.rs && cargo build --locked --release --manifest-path src-tauri/web/Cargo.toml && rm -f src-tauri/web/src/main.rs'
 
 COPY src-tauri ./src-tauri
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    sh -ec 'rm -rf src-tauri/web/target && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml && test "$(wc -c < src-tauri/web/target/release/acliv-web)" -gt 1000000 && grep -q "ACLIV (Web)" src-tauri/web/target/release/acliv-web'
+RUN --mount=type=cache,id=acliv-cargo-registry,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=acliv-cargo-git,target=/root/.cargo/git,sharing=locked \
+    sh -ec 'touch src-tauri/web/src/main.rs && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml && binary=src-tauri/web/target/release/acliv-web && test "$(wc -c < "$binary")" -gt 1000000 && grep -q "ACLIV (Web)" "$binary" && cp "$binary" /app/acliv-web'
 
 FROM ${RUNTIME_IMAGE}
 ARG ACLIV_IMAGE_TAG
@@ -51,7 +51,7 @@ RUN apk add --no-cache ca-certificates curl su-exec \
     && adduser -u 1000 -S -G app app
 
 COPY --from=frontend-builder --chown=app:app /app/dist /app/dist
-COPY --from=backend-builder --chown=app:app /app/src-tauri/web/target/release/acliv-web /app/acliv-web
+COPY --from=backend-builder --chown=app:app /app/acliv-web /app/acliv-web
 COPY --chown=app:app deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN test "$(wc -c < /app/acliv-web)" -gt 1000000 \

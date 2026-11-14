@@ -170,7 +170,9 @@ Invoke-Step -Name 'sync version files' -Action {
 Invoke-Step -Name 'clean previous build output' -Action {
   Stop-RepoProcess -ExecutablePath $desktopTargetExe
   if (Test-Path 'dist') { Remove-Item -LiteralPath 'dist' -Recurse -Force }
-  if (Test-Path 'src-tauri\target\release') { Remove-Item -LiteralPath 'src-tauri\target\release' -Recurse -Force }
+  if ($env:GITHUB_ACTIONS -ne 'true' -and (Test-Path 'src-tauri\target\release')) {
+    Remove-Item -LiteralPath 'src-tauri\target\release' -Recurse -Force
+  }
   if (Test-Path $releaseDir) { Remove-Item -LiteralPath $releaseDir -Recurse -Force }
   New-Item -ItemType Directory -Path $releaseDir | Out-Null
 }

@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout for change detection
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect code changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!assets/screenshots/**'
+  frontend:
+    name: Frontend checks
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run Svelte diagnostics
+        run: npx svelte-check
+
+      - name: Build frontend
+        run: npm run build
+
+  rust-desktop:
+    name: Desktop Rust checks
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ci-desktop
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+
+      - name: Check desktop
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Test desktop
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+  rust-web:
+    name: Web Rust checks
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri/web -> target
+          shared-key: ci-web
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+
+      - name: Check web server
+        run: cargo check --locked --manifest-path src-tauri/web/Cargo.toml
+
+  gate:
+    name: CI Gate
+    if: always()
+    needs:
+      - changes
+      - frontend
+      - rust-desktop
+      - rust-web
+    runs-on: ubuntu-latest
+    env:
+      CODE_CHANGED: ${{ needs.changes.outputs.code }}
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      FRONTEND_RESULT: ${{ needs.frontend.result }}
+      DESKTOP_RESULT: ${{ needs.rust-desktop.result }}
+      WEB_RESULT: ${{ needs.rust-web.result }}
+    steps:
+      - name: Verify required jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Change detection failed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$CODE_CHANGED" == "true" ]]; then
+            for result in "$FRONTEND_RESULT" "$DESKTOP_RESULT" "$WEB_RESULT"; do
+              if [[ "$result" != "success" ]]; then
+                echo "A required CI job did not succeed: $result" >&2
+                exit 1
+              fi
+            done
+          fi
+          echo "CI gate passed (code changed: $CODE_CHANGED)."
