@@ -113,6 +113,9 @@ jobs:
       group: docker-tags-${{ github.sha }}
       cancel-in-progress: false
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -123,7 +126,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Reuse master image and publish release tags
+      - name: Wait for the master image and cache
+        id: release
         shell: bash
         run: |
           set -euo pipefail
@@ -140,8 +144,19 @@ jobs:
             echo "Master image was not published for ${GITHUB_SHA}: ${source}" >&2
             exit 1
           fi
-          docker buildx imagetools create \
-            --tag "${image}:${GITHUB_REF_NAME}" \
-            --tag "${image}:${version}" \
-            --tag "${image}:latest" \
-            "$source"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tags=${image}:${GITHUB_REF_NAME},${image}:${version},${image}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build version metadata and publish release tags
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.release.outputs.tags }}
+          build-args: |
+            ACLIV_IMAGE_TAG=${{ steps.release.outputs.version }}
+            ACLIV_BUILD_REF=${{ github.sha }}
+          cache-from: type=gha,scope=acliv-web
+          provenance: false
