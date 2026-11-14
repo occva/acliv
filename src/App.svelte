@@ -3044,7 +3044,11 @@
 </div>
 {:else}
 <div class="app-container" style={`--sidebar-current-width: ${sidebarWidth}px`}>
-  <div class="window-drag-region" data-tauri-drag-region aria-hidden="true"></div>
+  <div
+      class="window-drag-region"
+      data-tauri-drag-region
+      aria-hidden="true"
+  ></div>
   <aside class="sidebar" style={`width: ${sidebarWidth}px`}>
     <div class="sidebar-content" id="projectsList">
         <div class="projects-list">

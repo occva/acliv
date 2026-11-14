@@ -1264,11 +1264,14 @@ html[data-runtime="desktop"][data-platform="macos"] .conversation-header h3 {
 html[data-runtime="desktop"][data-platform="macos"] .window-drag-region {
     position: absolute;
     top: 0;
-    left: calc(var(--sidebar-current-width, var(--sidebar-width)) + 120px);
-    right: 320px;
+    left: 76px;
+    right: 164px;
     z-index: 100;
     display: block;
-    height: 30px;
+    height: 32px;
+    cursor: default;
+    user-select: none;
+    touch-action: none;
 }
 
 html[data-runtime="desktop"][data-platform="macos"] .sidebar {
