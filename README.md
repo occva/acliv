@@ -1,168 +1,82 @@
-# ACLIV (Rust + Tauri)
+# ACLIV
 
-基于 Tauri 2 + Rust + Svelte 5 的 AI CLI 会话历史查看器。
+ACLIV 是一个 AI CLI 会话历史查看器，帮助你在一个界面中浏览、搜索和继续不同 AI 编程工具产生的本地会话。
 
-功能
+支持 Windows、macOS 桌面端，以及适合 Linux 服务器部署的 Web 模式。
 
-- 支持多 Provider：`claude`、`codex`（CLI 与 Desktop 共用）、`gemini`、`openclaw`、`opencode`、`pi`、`omp`、`dsh`
-- 会话列表统一扫描，按最近活跃时间排序
-- 点击会话按需加载消息详情
-- 支持暗色/亮色主题切换
-- Markdown 渲染与复制按钮
-- 支持 Linux Web 模式（默认端口 `17860`）
+## 功能
+
+- 统一浏览 Claude、Codex、Gemini、OpenClaw、OpenCode、Pi、OMP 和 DSH 会话
+- 按项目和 Provider 分类，按最近活跃时间排序
+- 全文搜索历史消息，并快速跳转到匹配位置
+- 展示 Markdown、代码块、Mermaid、thinking 和工具调用过程
+- 支持 fork、分支和子代理会话
+- 支持会话恢复命令、路径复制和安全删除
+- 支持暗色与亮色主题
 
 ## Screenshots
 
 | Main Overview | Search Dialog |
 | :-----------: | :-----------: |
-| ![Main Overview](assets/screenshots/overview.jpg) | ![Search Dialog](assets/screenshots/search-dialog.jpg) |
+| ![Main Overview](assets/screenshots/overview.png) | ![Search Dialog](assets/screenshots/search-dialog.png) |
 
 | Search Index Panel | Session Detail |
 | :----------------: | :------------: |
-| ![Search Index Panel](assets/screenshots/index-panel.jpg) | ![Session Detail](assets/screenshots/session-detail.jpg) |
+| ![Search Index Panel](assets/screenshots/index-panel.png) | ![Session Detail](assets/screenshots/session-detail.png) |
 
-## 当前架构
+## 下载
 
-后端已迁移到统一 `session_manager` 架构：
+桌面安装包可从 [GitHub Releases](https://github.com/occva/acliv/releases/latest) 下载。
 
-- `list_sessions`：扫描全部 provider，返回标准化 `SessionMeta[]`
-- `get_session_messages`：按 `providerId + sourcePath` 加载消息
-- `launch_session_terminal`：Windows/macOS 下启动终端执行恢复命令
-- `acliv-web`：独立 Web 入口（`/api/*`），复用同一套 `session_manager`
+## 本地开发
 
-Provider 格式覆盖：
-
-| Provider | 当前格式与兼容范围 |
-| --- | --- |
-| Claude | JSONL、fork 继承段、sidechain/子代理、custom/AI title、compact/thinking、工具错误 |
-| Codex | 活动与归档 rollout、`.jsonl`/`.jsonl.zst`、`state_5.sqlite` 元数据、内部线程过滤、spawn/fork、reasoning 与扩展工具事件 |
-| Gemini | 当前 JSONL `$set.messages` 快照、旧版单文件 JSON、`projects.json` 项目路径映射 |
-| OpenClaw | 当前 `openclaw-agent.sqlite` 窗口/活动分支与旧版 JSONL，迁移双副本自动裁决 |
-| OpenCode | `opencode.db`/`opencode-next.db`、v1 `message + part`、v2 `session_message`、早期 `session_v2` 与旧版 storage 文件树 |
-| Pi / OMP | 共用 JSONL 格式，树关系、model/usage、thinking、图片占位和工具错误 |
-| DSH | v0–v4、明文/多帧 Zstandard、最新代选择、fork seed、子代理、usage 与工具错误 |
-
-解析后的列表、详情和搜索共用同一消息语义。未知或损坏记录会写入索引同步诊断，不再静默当作完整解析；同 Provider、同原生会话 ID 的多份来源按格式等级与文件指纹裁决。
-
-
-## 技术栈
-
-- Desktop: Tauri 2
-- Backend: Rust (`serde`, `serde_json`, `chrono`, `regex`, `dirs`)
-- Frontend: Svelte 5 + Vite
-- Markdown/Security: `marked` + `highlight.js` + `DOMPurify`
-
-## 开发
-
-环境要求：
-
-- Node.js 18+
-- Rust stable
-- repo 内置 `@tauri-apps/cli`，直接用 `npm exec tauri ...`
-
-安装依赖：
+环境要求：Node.js 18+、Rust stable。
 
 ```bash
 npm install
-```
-
-开发运行：
-
-```bash
 npm exec tauri dev
 ```
 
-构建：
+启动 Web 模式：
 
 ```bash
-npm exec tauri build -- --no-bundle
+npm run web:start
 ```
 
-本地重编并直接启动桌面版时，使用上面的 Tauri 构建链路；不要用 `cargo build` 代替桌面构建。
-
-发布打包：
-
-Windows（PowerShell）：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1 -Scope release
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Version <x.y.z>
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-release.ps1 -Version <x.y.z>
-```
-
-macOS（原生 Bash）：
-
-```bash
-./scripts/check.sh --scope release
-./scripts/build-release-macos.sh --version <x.y.z>
-./scripts/publish-release.sh --version <x.y.z>
-```
-
-没有本地 updater 私钥时，可用 `./scripts/build-release-macos.sh --version <x.y.z> --unsigned` 只验证 DMG；该产物不得用于正式发布。
-
-本地构建产物只用于验证；正式 Windows/macOS 资产由版本标签触发 GitHub Actions 构建并上传。
+默认访问地址为 `http://127.0.0.1:17860`。
 
 ## Linux 部署
 
-一键部署
 ```bash
 curl -fsSL https://raw.githubusercontent.com/occva/acliv/master/deploy/install.sh | sudo env ACLIV_REPO_BRANCH=master bash
 ```
 
-安装脚本会自动：
+安装脚本会自动生成 Web 登录账号密码、探测常见 Provider 目录并启动 Docker 服务。
 
-- 生成 Web 登录账号密码（默认账号 `admin`）
-- 探测常见 provider 历史目录并写入部署配置
-- 拉取 GHCR 预构建镜像并启动服务
-- 输出访问地址和登录凭据
-
-如需关闭 Web 登录验证并直接公网访问，可在 `deploy/.env` 中设置：
+如需关闭 Web 登录验证，可在 `deploy/.env` 中设置：
 
 ```bash
 ACLIV_WEB_AUTH_ENABLED=0
 ```
 
-默认不配置时仍然启用账号密码登录，兼容之前的部署；只有手动设置为 `0` / `false` 时才会公开访问。
+关闭验证后所有 Web 路由均可直接访问，请仅在可信网络中使用。
 
 ## 项目结构
 
 ```text
 .
-├── assets/
-│   └── screenshots/              # README 截图资源
-├── deploy/                       # Docker 与 Linux 安装脚本
-├── docs/                         # 设计、重构、发布与部署文档
-├── public/
-│   └── css/style.css             # 主界面样式
-├── scripts/                      # 构建/发布辅助脚本
-├── src/                          # Svelte 前端
-│   ├── App.svelte                # 主界面与交互逻辑
-│   ├── main.ts
-│   └── lib/
-│       ├── api.ts                # Tauri/Web API 适配层
-│       └── components/
-│           └── Markdown.svelte   # Markdown / Mermaid 渲染
+├── assets/screenshots/       # README 截图
+├── deploy/                   # Docker 与 Linux 部署
+├── docs/                     # 设计文档与发布说明
+├── public/                   # 图标与全局样式
+├── scripts/                  # 检查、构建与发布脚本
+├── src/                      # Svelte 前端
 ├── src-tauri/
 │   ├── src/
-│   │   ├── lib.rs                # Tauri 入口与命令注册
-│   │   ├── main.rs               # Desktop 启动入口
-│   │   ├── cmd.rs                # Tauri commands
-│   │   ├── watcher.rs            # 本地 session 文件监听与索引同步
-│   │   ├── paths.rs              # 各 CLI 默认目录解析
-│   ├── web/                      # Web server 独立 Cargo manifest
-│   │   ├── session_manager/      # 统一 provider 扫描与消息读取
-│   │   │   ├── mod.rs
-│   │   │   └── providers/        # claude/codex/gemini/openclaw/opencode/pi/omp/dsh
-│   │   └── search_index/         # SQLite 全文索引、查询与状态管理
-│   │       ├── mod.rs
-│   │       ├── indexer.rs
-│   │       ├── query.rs
-│   │       ├── schema.rs
-│   │       └── status.rs
-│   └── tauri.conf.json
-├── .github/
-│   └── workflows/                # CI / release workflow
-└── package.json
+│   │   ├── session_manager/  # Provider 会话解析
+│   │   └── search_index/     # 搜索索引
+│   └── web/                  # 独立 Web 服务
+└── .github/workflows/        # CI 与发布工作流
 ```
 
 ## License
