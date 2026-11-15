@@ -76,7 +76,7 @@ jobs:
             version="v${clean_version}"
             tags="${image}:${version},${image}:${clean_version},${image}:latest"
             image_tag="${clean_version}"
-            build_ref="${GITHUB_SHA}"
+            build_ref="$(git rev-parse HEAD)"
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             version="${GITHUB_REF#refs/tags/}"
             clean_version="${version#v}"
