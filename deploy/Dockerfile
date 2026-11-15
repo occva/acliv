@@ -38,8 +38,31 @@ RUN --mount=type=cache,id=acliv-cargo-registry,target=/root/.cargo/registry,shar
 
 COPY src-tauri ./src-tauri
 RUN --mount=type=cache,id=acliv-cargo-registry,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,id=acliv-cargo-git,target=/root/.cargo/git,sharing=locked \
-    sh -ec 'touch src-tauri/web/src/main.rs && cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml && binary=src-tauri/web/target/release/acliv-web && test "$(wc -c < "$binary")" -gt 1000000 && grep -q "ACLIV (Web)" "$binary" && cp "$binary" /app/acliv-web'
+    --mount=type=cache,id=acliv-cargo-git,target=/root/.cargo/git,sharing=locked <<'EOF'
+set -eu
+touch src-tauri/web/src/main.rs
+cargo build --locked --release ${CARGO_BUILD_JOBS:+--jobs="$CARGO_BUILD_JOBS"} --manifest-path src-tauri/web/Cargo.toml
+binary=src-tauri/web/target/release/acliv-web
+size="$(wc -c < "$binary")"
+echo "Built Web binary: $binary ($size bytes)"
+test "$size" -gt 1000000
+
+startup_log=/tmp/acliv-web-startup.log
+ACLIV_HOST=127.0.0.1 ACLIV_PORT=17860 ACLIV_WEB_AUTH_ENABLED=0 "$binary" >"$startup_log" 2>&1 &
+pid=$!
+cleanup() {
+    kill "$pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+sleep 1
+kill -0 "$pid"
+grep -F -q "ACLIV (Web)" "$startup_log"
+cleanup
+wait "$pid" || true
+trap - EXIT
+
+install -m 0755 "$binary" /app/acliv-web
+EOF
 
 FROM ${RUNTIME_IMAGE}
 ARG ACLIV_IMAGE_TAG
@@ -55,7 +78,7 @@ COPY --from=backend-builder --chown=app:app /app/acliv-web /app/acliv-web
 COPY --chown=app:app deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN test "$(wc -c < /app/acliv-web)" -gt 1000000 \
-    && grep -q "ACLIV (Web)" /app/acliv-web \
+    && test -x /app/acliv-web \
     && chmod +x /app/docker-entrypoint.sh \
     && mkdir -p /app/data
 

@@ -46,10 +46,14 @@ jobs:
         if: ${{ inputs.version != '' }}
         shell: bash
         run: |
+          dockerfile="$(mktemp)"
+          cp deploy/Dockerfile "$dockerfile"
           clean_version="${{ inputs.version }}"
           clean_version="${clean_version#v}"
           git fetch --depth=1 --force origin "refs/tags/v${clean_version}:refs/tags/v${clean_version}"
           git checkout "v${clean_version}"
+          cp "$dockerfile" deploy/Dockerfile
+          rm -f "$dockerfile"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -126,28 +130,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Wait for the master image and cache
+      - name: Prepare release image metadata
         id: release
         shell: bash
         run: |
           set -euo pipefail
           image="ghcr.io/occva/acliv"
           version="${GITHUB_REF_NAME#v}"
-          source="${image}:sha-${GITHUB_SHA::7}"
-          for _ in {1..240}; do
-            if docker buildx imagetools inspect "$source" >/dev/null 2>&1; then
-              break
-            fi
-            sleep 5
-          done
-          if ! docker buildx imagetools inspect "$source" >/dev/null 2>&1; then
-            echo "Master image was not published for ${GITHUB_SHA}: ${source}" >&2
-            exit 1
-          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tags=${image}:${GITHUB_REF_NAME},${image}:${version},${image}:latest" >> "$GITHUB_OUTPUT"
 
-      - name: Build version metadata and publish release tags
+
+      - name: Build and publish Docker release image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -159,4 +153,5 @@ jobs:
             ACLIV_IMAGE_TAG=${{ steps.release.outputs.version }}
             ACLIV_BUILD_REF=${{ github.sha }}
           cache-from: type=gha,scope=acliv-web
+          cache-to: type=gha,mode=max,scope=acliv-web
           provenance: false
