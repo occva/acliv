@@ -47,16 +47,25 @@ size="$(wc -c < "$binary")"
 echo "Built Web binary: $binary ($size bytes)"
 test "$size" -gt 1000000
 
+smoke_dist=/tmp/acliv-web-dist
+mkdir -p "$smoke_dist"
+printf '<!doctype html><html><body>ACLIV</body></html>\n' > "$smoke_dist/index.html"
 startup_log=/tmp/acliv-web-startup.log
-ACLIV_HOST=127.0.0.1 ACLIV_PORT=17860 ACLIV_WEB_AUTH_ENABLED=0 "$binary" >"$startup_log" 2>&1 &
+ACLIV_FRONTEND_DIST="$smoke_dist" ACLIV_HOST=127.0.0.1 ACLIV_PORT=17860 ACLIV_WEB_AUTH_ENABLED=0 "$binary" >"$startup_log" 2>&1 &
 pid=$!
 cleanup() {
     kill "$pid" 2>/dev/null || true
 }
 trap cleanup EXIT
 sleep 1
-kill -0 "$pid"
-grep -F -q "ACLIV (Web)" "$startup_log"
+if ! kill -0 "$pid" 2>/dev/null; then
+    cat "$startup_log" >&2
+    exit 1
+fi
+if ! grep -F -q "ACLIV (Web)" "$startup_log"; then
+    cat "$startup_log" >&2
+    exit 1
+fi
 cleanup
 wait "$pid" || true
 trap - EXIT
