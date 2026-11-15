@@ -256,7 +256,17 @@ fn collect_watch_roots() -> Result<Vec<(String, PathBuf)>, String> {
     for provider in PROVIDERS {
         let root = crate::paths::get_provider_base_dir(provider)?;
         if root.exists() {
-            roots.push((provider.to_string(), root));
+            roots.push((provider.to_string(), root.clone()));
+        }
+        if provider == "codex"
+            && root.file_name().and_then(|value| value.to_str()) == Some("sessions")
+        {
+            if let Some(home) = root.parent() {
+                let archived = home.join("archived_sessions");
+                if archived.is_dir() {
+                    roots.push((provider.to_string(), archived));
+                }
+            }
         }
     }
     Ok(roots)

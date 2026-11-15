@@ -2116,172 +2116,118 @@ html[data-runtime="desktop"][data-platform="macos"] .sidebar {
 .conversation-detail {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-6) 56px 48px var(--space-6);
+    padding: var(--space-6) var(--space-6) 48px 80px;
     scroll-behavior: smooth;
 }
 
 .detail-progress-nav {
     position: fixed;
     top: 132px;
-    right: var(--space-3);
-    width: 36px;
-    min-height: 32px;
+    left: calc(var(--sidebar-current-width, var(--sidebar-width)) + 10px);
+    width: 40px;
+    min-height: 48px;
     z-index: 1050;
     pointer-events: auto;
     overflow: visible;
-    transition: width var(--duration-fast) ease;
 }
 
-.detail-progress-nav.expanded {
-    width: 360px;
+.detail-progress-marks {
+    position: absolute;
+    inset: 0;
+    width: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    padding: 6px 0;
 }
 
 .detail-progress-anchor {
-    position: absolute;
-    right: 0;
-    transform: translateY(-50%);
-    width: var(--progress-mark-width, 12px);
-    height: 3px;
+    position: relative;
+    flex: 1 1 0;
+    min-height: 4px;
+    max-height: 14px;
+    width: 40px;
     padding: 0;
     border: none;
-    border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--text-muted) 38%, transparent);
+    background: transparent;
     box-shadow: none;
     cursor: pointer;
-    pointer-events: auto;
-    transition: width var(--duration-fast) ease, background var(--duration-fast) ease, height var(--duration-fast) ease;
+    opacity: 0.48;
+    transition: opacity var(--duration-fast) ease;
 }
 
-
-.detail-progress-anchor:hover,
-.detail-progress-anchor:focus-visible {
-    background: var(--text-secondary);
-    outline: none;
-}
-
-.detail-progress-anchor.active {
-    height: 4px;
-    background: var(--text-primary);
-}
-
-.detail-progress-directory {
+.detail-progress-anchor::after {
+    content: "";
     position: absolute;
-    top: -8px;
-    right: 44px;
-    transform: translateX(var(--space-2)) scale(0.98);
-    width: 300px;
-    max-height: min(60vh, 500px);
-    padding: var(--space-3);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.16);
-    backdrop-filter: blur(16px);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transform-origin: right top;
-    transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease, visibility var(--duration-fast) ease;
-}
-
-.detail-progress-nav:hover .detail-progress-directory,
-.detail-progress-nav:focus-within .detail-progress-directory {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transform: translateX(0) scale(1);
-}
-
-.detail-progress-directory-title {
-    margin: 0 var(--space-1) var(--space-2);
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.03em;
-}
-
-.detail-progress-directory-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: calc(min(60vh, 500px) - 40px);
-    overflow-y: auto;
-    padding-right: var(--space-1);
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--text-muted) 32%, transparent) transparent;
-    scrollbar-gutter: stable;
-}
-
-.detail-progress-directory-list::-webkit-scrollbar {
-    width: 6px;
-}
-
-.detail-progress-directory-list::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.detail-progress-directory-list::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--text-muted) 30%, transparent);
+    top: 50%;
+    left: 0;
+    width: 8px;
+    height: 2px;
     border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--text-muted) 38%, transparent);
+    transform: translateY(-50%);
+    transition: width var(--duration-fast) ease, height var(--duration-fast) ease, background var(--duration-fast) ease;
 }
 
-.detail-progress-directory-list::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--text-muted) 48%, transparent);
-}
-
-.detail-progress-item {
-    flex: 0 0 auto;
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr);
-    align-items: start;
-    gap: var(--space-2);
-    width: 100%;
-    min-height: 36px;
-    padding: var(--space-2);
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-    transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
-}
-
-.detail-progress-item:hover,
-.detail-progress-item:focus-visible {
-    background: var(--bg-hover);
+.detail-progress-nav:hover .detail-progress-anchor,
+.detail-progress-nav:focus-within .detail-progress-anchor,
+.detail-progress-anchor:focus-visible {
+    opacity: 1;
     outline: none;
 }
 
-.detail-progress-item.active {
-    background: color-mix(in srgb, var(--accent-blue) 11%, var(--bg-tertiary));
-    color: var(--accent-blue);
-}
-
-.detail-progress-item-line {
+.detail-progress-anchor:hover::after,
+.detail-progress-anchor:focus-visible::after {
     width: 16px;
+    background: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+}
+
+.detail-progress-anchor.active::after {
+    width: 24px;
     height: 3px;
-    margin-top: 7px;
-    border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--text-muted) 32%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 74%, transparent);
 }
 
-.detail-progress-item.active .detail-progress-item-line {
-    background: currentColor;
+.detail-progress-preview {
+    position: absolute;
+    top: 50%;
+    left: 50px;
+    width: min(360px, 42vw);
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 11px 0 13px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+    color: var(--text-secondary);
+    box-shadow: var(--shadow-sm);
+    pointer-events: none;
+    transform: translateY(-50%);
+    backdrop-filter: blur(10px);
 }
 
-.detail-progress-item-label {
+.detail-progress-preview-label {
     min-width: 0;
-    color: inherit;
-    font-size: 12px;
-    line-height: 1.45;
-    word-break: break-word;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    flex: 1;
     overflow: hidden;
+    font-size: 12px;
+    font-weight: 520;
+    line-height: 1.35;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
+
+.detail-progress-preview-icon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+}
+
 
 .detail-refresh-fab {
     position: fixed;
@@ -2642,6 +2588,12 @@ html[data-runtime="desktop"][data-platform="macos"] .sidebar {
     padding: 0 var(--space-1);
 }
 
+.messages-container::after {
+    content: "";
+    flex: 0 0 max(32px, calc(100vh - 220px));
+    pointer-events: none;
+}
+
 .message {
     position: relative;
     border: none;
@@ -2805,6 +2757,15 @@ html[data-runtime="desktop"][data-platform="macos"] .sidebar {
 .tool-result-message {
     background: color-mix(in srgb, var(--accent-green) 6%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-green) 20%, transparent);
+}
+
+.tool-error-message {
+    background: color-mix(in srgb, var(--accent-red) 7%, transparent);
+    border-color: color-mix(in srgb, var(--accent-red) 28%, transparent);
+}
+
+.tool-error-message .message-role {
+    color: var(--accent-red);
 }
 
 .instruction-message,
@@ -3103,35 +3064,19 @@ html[data-runtime="desktop"][data-platform="macos"] .sidebar {
     background: rgba(0, 0, 0, 0.08);
 }
 
-[data-theme="light"] .detail-progress-anchor {
-    background: rgba(148, 163, 184, 0.5);
+[data-theme="light"] .detail-progress-anchor::after {
+    background: rgba(100, 116, 139, 0.28);
 }
 
-[data-theme="light"] .detail-progress-anchor:hover,
-[data-theme="light"] .detail-progress-anchor:focus-visible {
-    background: rgba(71, 85, 105, 0.72);
+[data-theme="light"] .detail-progress-anchor:hover::after,
+[data-theme="light"] .detail-progress-anchor:focus-visible::after {
+    background: rgba(71, 85, 105, 0.5);
 }
 
-[data-theme="light"] .detail-progress-anchor.active {
-    background: rgba(31, 41, 55, 0.92);
+[data-theme="light"] .detail-progress-anchor.active::after {
+    background: rgba(31, 41, 55, 0.65);
 }
 
-[data-theme="light"] .detail-progress-directory {
-    background: var(--bg-primary);
-    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
-}
-
-[data-theme="light"] .detail-progress-directory-list {
-    scrollbar-color: rgba(100, 116, 139, 0.38) transparent;
-}
-
-[data-theme="light"] .detail-progress-directory-list::-webkit-scrollbar-thumb {
-    background: rgba(100, 116, 139, 0.34);
-}
-
-[data-theme="light"] .detail-progress-directory-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(100, 116, 139, 0.5);
-}
 
 /* Scrollbar */
 ::-webkit-scrollbar {
@@ -3179,27 +3124,33 @@ html[data-runtime="desktop"][data-platform="macos"] .sidebar {
 
     .detail-progress-nav {
         top: 108px;
-        right: 10px;
+        right: auto;
+        left: 8px;
         width: 24px;
-        min-height: 24px;
+        min-height: 40px;
     }
 
-    .detail-progress-nav.expanded {
-        width: 24px;
-    }
-
+    .detail-progress-marks,
     .detail-progress-anchor {
-        width: 16px;
+        width: 24px;
+    }
+
+    .detail-progress-anchor::after {
+        width: 6px;
         height: 2px;
     }
 
-    .detail-progress-anchor:hover,
-    .detail-progress-anchor:focus-visible,
-    .detail-progress-anchor.active {
-        width: 18px;
+    .detail-progress-anchor:hover::after,
+    .detail-progress-anchor:focus-visible::after {
+        width: 10px;
     }
 
-    .detail-progress-directory {
+    .detail-progress-anchor.active::after {
+        width: 14px;
+        height: 3px;
+    }
+
+    .detail-progress-preview {
         display: none;
     }
 
@@ -3211,7 +3162,7 @@ html[data-runtime="desktop"][data-platform="macos"] .sidebar {
     }
 
     .conversation-detail {
-        padding: var(--spacing-lg);
+        padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-lg) 48px;
     }
 }
 

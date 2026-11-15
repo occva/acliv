@@ -53,7 +53,7 @@ pub fn get_status(connection: &Connection) -> Result<SearchIndexStatus, String> 
         .flatten();
     let last_successful_sync_at = connection
         .query_row(
-            "SELECT MAX(synced_at) FROM sync_log WHERE status = 'ok'",
+            "SELECT MAX(synced_at) FROM sync_log WHERE status IN ('ok', 'warning')",
             [],
             |row| row.get::<_, Option<String>>(0),
         )

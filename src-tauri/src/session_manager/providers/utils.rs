@@ -1,7 +1,8 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::UNIX_EPOCH;
 
 use chrono::{DateTime, FixedOffset};
 use regex::Regex;
@@ -181,9 +182,45 @@ pub fn log_scan_error(provider: &str, path: &Path, err: &io::Error) {
     );
 }
 
+/// SQLite writers commonly leave the newest state in `<db>-wal` until checkpoint.
+/// The source fingerprint therefore covers both the main database and its WAL.
+pub fn sqlite_source_state(path: &Path) -> (Option<i64>, Option<i64>) {
+    let mut wal_name = path.as_os_str().to_os_string();
+    wal_name.push("-wal");
+    let candidates = [path.to_path_buf(), PathBuf::from(wal_name)];
+    let mut latest_mtime = None;
+    let mut total_size = 0_i64;
+    let mut found = false;
+
+    for candidate in candidates {
+        let Ok(metadata) = fs::metadata(candidate) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        found = true;
+        if let Some(mtime) = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .and_then(|value| i64::try_from(value.as_millis()).ok())
+        {
+            latest_mtime = Some(latest_mtime.map_or(mtime, |current: i64| current.max(mtime)));
+        }
+        total_size = total_size.saturating_add(i64::try_from(metadata.len()).unwrap_or(i64::MAX));
+    }
+
+    (latest_mtime, found.then_some(total_size))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_title_candidate;
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{normalize_title_candidate, sqlite_source_state};
 
     #[test]
     fn normalize_title_candidate_decodes_file_links_and_percent_sequences() {
@@ -193,5 +230,18 @@ mod tests {
         );
 
         assert_eq!(title.as_deref(), Some("@社团首页.htm"));
+    }
+
+    #[test]
+    fn sqlite_source_state_includes_wal_bytes() {
+        let dir = tempdir().expect("tempdir");
+        let database = dir.path().join("source.db");
+        let wal = dir.path().join("source.db-wal");
+        fs::write(&database, b"db").expect("write database");
+        fs::write(&wal, b"wal!").expect("write wal");
+
+        let (mtime, size) = sqlite_source_state(&database);
+        assert!(mtime.is_some());
+        assert_eq!(size, Some(6));
     }
 }

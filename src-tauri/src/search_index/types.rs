@@ -129,6 +129,10 @@ pub struct IndexedMessage {
     pub is_sidechain: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tool_names: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub is_error: bool,
+    pub truncated: bool,
     pub seq: i64,
 }
 

@@ -550,6 +550,49 @@ mod tests {
         assert!(matches!(err, SearchIndexError::NotFound(_)));
     }
 
+    #[test]
+    fn refresh_preserves_sqlite_provider_rows_when_scan_fails() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fixture = SearchFixture::new();
+        rebuild_index().expect("initial rebuild");
+
+        let invalid_database = PathBuf::from(&fixture.opencode_root_path).join("opencode.db");
+        fs::write(&invalid_database, b"not a sqlite database").expect("write invalid database");
+        let frozen_source = format!("{}#frozen-session", invalid_database.display());
+
+        let connection = db::open_connection().expect("open search database");
+        schema::run_migrations(&connection).expect("migrate search database");
+        let source_id: i64 = connection
+            .query_row(
+                "SELECT id FROM sources WHERE name = 'opencode'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("opencode source");
+        connection
+            .execute(
+                "INSERT INTO projects (source_id, slug, display_path, display_name) VALUES (?1, 'frozen', '/work', 'work')",
+                [source_id],
+            )
+            .expect("insert project");
+        let project_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO sessions (project_id, source_id, provider_session_id, source_path, title, message_count) VALUES (?1, ?2, 'frozen-session', ?3, 'Frozen', 1)",
+                rusqlite::params![project_id, source_id, frozen_source],
+            )
+            .expect("insert frozen session");
+        drop(connection);
+
+        let refreshed = refresh_index().expect("refresh with failed provider");
+        assert_eq!(refreshed.error_sessions, 1);
+        let sessions = list_indexed_sessions(10, Some("opencode")).expect("opencode sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "frozen-session");
+    }
+
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -564,6 +607,7 @@ mod tests {
         empty_codex_source_path: String,
         metadata_only_codex_source_path: String,
         codex_tool_source_path: String,
+        opencode_root_path: String,
     }
 
     impl SearchFixture {
@@ -624,6 +668,7 @@ mod tests {
                 source_path: source_path.to_string_lossy().to_string(),
                 claude_project_path: claude_project.to_string_lossy().to_string(),
                 codex_sessions_path: codex_sessions.to_string_lossy().to_string(),
+                opencode_root_path: opencode_storage.to_string_lossy().to_string(),
                 empty_codex_source_path: codex_sessions
                     .join("empty-codex-session.jsonl")
                     .to_string_lossy()

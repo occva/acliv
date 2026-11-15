@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -17,7 +17,14 @@ const PROVIDERS: [&str; 8] = [
 ];
 
 pub fn rebuild_index(connection: &mut Connection) -> Result<RebuildSearchIndexResult, String> {
-    let sessions = session_manager::scan_sessions();
+    let scan = session_manager::scan_sessions_with_status();
+    if !scan.failed_providers.is_empty() {
+        return Err(format!(
+            "Cannot rebuild search index because provider scans failed: {}",
+            scan.failed_providers.join(", ")
+        ));
+    }
+    let sessions = scan.sessions;
     let mut error_sessions = 0_i64;
 
     let transaction = connection
@@ -110,19 +117,36 @@ where
             total: 0,
         },
     );
-    let sessions = session_manager::scan_sessions();
+    let scan = session_manager::scan_sessions_with_status();
+    let failed_providers = scan.failed_providers;
+    let sessions = scan.sessions;
     let scanned_sessions = i64::try_from(sessions.len()).unwrap_or(i64::MAX);
     let mut added_sessions = 0_i64;
     let mut updated_sessions = 0_i64;
     let mut removed_sessions = 0_i64;
     let mut skipped_sessions = 0_i64;
-    let mut error_sessions = 0_i64;
+    let mut error_sessions = i64::try_from(failed_providers.len()).unwrap_or(i64::MAX);
 
     let transaction = connection
         .transaction()
         .map_err(|e| format!("Failed to start refresh transaction: {e}"))?;
     let source_ids = seed_sources(&transaction)?;
     let existing = load_existing_sessions(&transaction)?;
+    let failed_source_ids: HashSet<i64> = failed_providers
+        .iter()
+        .filter_map(|provider| source_ids.get(provider).copied())
+        .collect();
+    for provider in &failed_providers {
+        if let Some(source_id) = source_ids.get(provider).copied() {
+            insert_sync_log(
+                &transaction,
+                source_id,
+                provider,
+                "error",
+                Some("Provider scan failed; existing index rows were preserved"),
+            )?;
+        }
+    }
     let mut seen_keys = HashSet::with_capacity(sessions.len());
     emit_progress(
         &mut on_progress,
@@ -150,7 +174,7 @@ where
 
         let key = SessionKey::new(source_id, source_path);
         seen_keys.insert(key.clone());
-        let file_state = read_source_metadata(source_path);
+        let file_state = read_source_metadata(session);
         let project = resolve_project(session, source_path);
 
         match existing.get(&key) {
@@ -188,6 +212,9 @@ where
 
     for (key, existing_record) in existing {
         if seen_keys.contains(&key) {
+            continue;
+        }
+        if failed_source_ids.contains(&key.source_id) {
             continue;
         }
 
@@ -334,7 +361,7 @@ fn upsert_session_index(
 
     let project = resolve_project(session, source_path);
     let project_id = get_or_create_project(transaction, source_id, &project)?;
-    let file_state = read_source_metadata(source_path);
+    let file_state = read_source_metadata(session);
     let message_count = i64::try_from(
         messages
             .iter()
@@ -472,9 +499,12 @@ fn upsert_session_index(
               ts,
               is_sidechain,
               tool_names,
+              model,
+              is_error,
+              truncated,
               seq
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .map_err(|e| format!("Failed to prepare message insert statement: {e}"))?;
@@ -502,6 +532,9 @@ fn upsert_session_index(
                 message.ts,
                 message.is_sidechain,
                 tool_names,
+                message.model.as_deref(),
+                message.is_error,
+                message.truncated,
                 i64::try_from(index).unwrap_or(i64::MAX),
             ])
             .map_err(|e| {
@@ -512,7 +545,20 @@ fn upsert_session_index(
             })?;
     }
 
-    insert_sync_log(transaction, source_id, source_path, "ok", None)
+    if session.unknown_records > 0 {
+        insert_sync_log(
+            transaction,
+            source_id,
+            source_path,
+            "warning",
+            Some(&format!(
+                "Ignored {} unknown or malformed source records",
+                session.unknown_records
+            )),
+        )
+    } else {
+        insert_sync_log(transaction, source_id, source_path, "ok", None)
+    }
 }
 
 fn insert_sync_log(
@@ -656,14 +702,27 @@ fn load_existing_sessions(
     Ok(existing)
 }
 
-fn read_source_metadata(source_path: &str) -> FileState {
-    let metadata = match fs::metadata(source_path) {
+fn read_source_metadata(session: &SessionMeta) -> FileState {
+    if session.source_mtime.is_some() || session.source_size.is_some() {
+        return FileState {
+            raw_mtime: session.source_mtime,
+            raw_size: session.source_size,
+        };
+    }
+
+    let Some(source_path) = session.source_path.as_deref() else {
+        return FileState::default();
+    };
+    let backing_path = source_path
+        .rsplit_once('#')
+        .map_or(source_path, |(path, _)| path);
+    let metadata = match fs::metadata(backing_path) {
         Ok(metadata) => metadata,
         Err(_) => return FileState::default(),
     };
 
     if metadata.is_dir() {
-        return read_directory_source_metadata(Path::new(source_path));
+        return read_directory_source_metadata(Path::new(backing_path));
     }
 
     let raw_mtime = metadata
@@ -763,7 +822,10 @@ fn indexed_source_missing(connection: &Connection) -> Result<bool, String> {
 
     for row in rows {
         let source_path = row.map_err(|e| format!("Failed to read indexed source path: {e}"))?;
-        if !Path::new(&source_path).exists() {
+        let backing_path = source_path
+            .rsplit_once('#')
+            .map_or(source_path.as_str(), |(path, _)| path);
+        if !Path::new(backing_path).exists() {
             return Ok(true);
         }
     }
@@ -775,8 +837,18 @@ fn latest_provider_source_mtimes() -> Result<HashMap<String, i64>, String> {
     let mut latest = HashMap::new();
     for provider in PROVIDERS {
         let root = crate::paths::get_provider_base_dir(provider)?;
+        let mut roots = vec![root.clone()];
+        if provider == "codex"
+            && root.file_name().and_then(|value| value.to_str()) == Some("sessions")
+        {
+            if let Some(home) = root.parent() {
+                roots.push(home.join("archived_sessions"));
+            }
+        }
         let mut provider_latest = None;
-        collect_latest_source_mtime(provider, &root, &root, &mut provider_latest);
+        for candidate in roots {
+            collect_latest_source_mtime(provider, &candidate, &candidate, &mut provider_latest);
+        }
         if let Some(mtime) = provider_latest {
             latest.insert(provider.to_string(), mtime);
         }
@@ -788,12 +860,21 @@ fn collect_latest_source_mtime(provider: &str, root: &Path, path: &Path, latest:
     if !path.exists() {
         return;
     }
+    if path.is_file() {
+        if is_source_candidate(provider, root, path) {
+            if let Some(mtime) = file_mtime_ms(path) {
+                if latest.map(|current| mtime > current).unwrap_or(true) {
+                    *latest = Some(mtime);
+                }
+            }
+        }
+        return;
+    }
 
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(_) => return,
     };
-
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -812,14 +893,29 @@ fn collect_latest_source_mtime(provider: &str, root: &Path, path: &Path, latest:
     }
 }
 
-fn is_source_candidate(provider: &str, root: &Path, path: &PathBuf) -> bool {
+fn is_source_candidate(provider: &str, root: &Path, path: &Path) -> bool {
     let extension = path.extension().and_then(|ext| ext.to_str());
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     match provider {
-        "gemini" => extension == Some("json") && path_components_contain(path, "chats"),
-        "opencode" => {
-            extension == Some("json")
-                && (path_under(root, path, "session") || path_under(root, path, "message"))
+        "codex" => name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"),
+        "gemini" => {
+            matches!(extension, Some("json" | "jsonl")) && path_components_contain(path, "chats")
         }
+        "opencode" => {
+            matches!(
+                name,
+                "opencode.db" | "opencode.db-wal" | "opencode-next.db" | "opencode-next.db-wal"
+            ) || (extension == Some("json")
+                && (path_under(root, path, "session") || path_under(root, path, "message")))
+        }
+        "openclaw" => {
+            matches!(name, "openclaw-agent.sqlite" | "openclaw-agent.sqlite-wal")
+                || extension == Some("jsonl")
+        }
+        "dsh" => name.ends_with(".jsonl") || name.ends_with(".jsonl.zstd"),
         _ => extension == Some("jsonl"),
     }
 }
@@ -1006,4 +1102,31 @@ struct ResolvedProject {
     slug: String,
     display_path: String,
     display_name: String,
+}
+
+#[cfg(test)]
+mod source_candidate_tests {
+    use std::path::Path;
+
+    use super::is_source_candidate;
+
+    #[test]
+    fn sqlite_wal_files_are_source_candidates() {
+        let root = Path::new("/data");
+        assert!(is_source_candidate(
+            "opencode",
+            root,
+            Path::new("/data/opencode.db-wal")
+        ));
+        assert!(is_source_candidate(
+            "opencode",
+            root,
+            Path::new("/data/opencode-next.db-wal")
+        ));
+        assert!(is_source_candidate(
+            "openclaw",
+            root,
+            Path::new("/data/openclaw-agent.sqlite-wal")
+        ));
+    }
 }

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::tokenizer;
 
-const SEARCH_SCHEMA_VERSION: i32 = 2;
+const SEARCH_SCHEMA_VERSION: i32 = 3;
 
 pub fn run_migrations(connection: &Connection) -> Result<(), String> {
     connection
@@ -66,6 +66,9 @@ pub fn run_migrations(connection: &Connection) -> Result<(), String> {
               ts           INTEGER,
               is_sidechain INTEGER NOT NULL DEFAULT 0,
               tool_names   TEXT NOT NULL DEFAULT '[]',
+              model        TEXT,
+              is_error     INTEGER NOT NULL DEFAULT 0,
+              truncated    INTEGER NOT NULL DEFAULT 0,
               seq          INTEGER NOT NULL
             );
 
@@ -174,6 +177,24 @@ pub fn run_migrations(connection: &Connection) -> Result<(), String> {
         "messages",
         "tool_names",
         "ALTER TABLE messages ADD COLUMN tool_names TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column(
+        connection,
+        "messages",
+        "model",
+        "ALTER TABLE messages ADD COLUMN model TEXT",
+    )?;
+    ensure_column(
+        connection,
+        "messages",
+        "is_error",
+        "ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        connection,
+        "messages",
+        "truncated",
+        "ALTER TABLE messages ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0",
     )?;
 
     backfill_missing_search_text(connection)?;

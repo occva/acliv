@@ -42,7 +42,7 @@ const PROVIDERS: [ProviderDefinition; 8] = [
         name: "OpenCode",
         env_var: "ACLIV_OPENCODE_DIR",
         hidden_dir_name: "",
-        data_subdir: "storage",
+        data_subdir: "",
         default_kind: ProviderDefaultKind::OpenCode,
     },
     ProviderDefinition {
@@ -203,6 +203,28 @@ fn save_config(config: &PathConfig) -> Result<(), String> {
 }
 
 fn resolve_provider_default(definition: &ProviderDefinition) -> PathBuf {
+    if definition.id == "codex" {
+        if let Some(home) = env_dir("CODEX_HOME") {
+            let sessions = home.join("sessions");
+            if sessions.is_dir() || home.join("archived_sessions").is_dir() {
+                return sessions;
+            }
+        }
+    }
+    if definition.id == "openclaw" {
+        if let Some(state) = env_dir("OPENCLAW_STATE_DIR") {
+            let agents = state.join("agents");
+            if agents.is_dir() {
+                return agents;
+            }
+        }
+        let home = home_dir();
+        let current = home.join(".openclaw/agents");
+        let legacy = home.join(".clawdbot/agents");
+        if !current.exists() && legacy.exists() {
+            return legacy;
+        }
+    }
     match definition.default_kind {
         ProviderDefaultKind::HomeHidden => {
             resolve_tool_data_dir(definition.hidden_dir_name, definition.data_subdir)
@@ -210,13 +232,13 @@ fn resolve_provider_default(definition: &ProviderDefinition) -> PathBuf {
         ProviderDefaultKind::OpenCode => {
             if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
                 if !xdg.trim().is_empty() {
-                    return normalize_data_dir(Path::new(&xdg).join("opencode"), "storage");
+                    return Path::new(&xdg).join("opencode");
                 }
             }
 
             dirs::home_dir()
-                .map(|home| home.join(".local/share/opencode/storage"))
-                .unwrap_or_else(|| PathBuf::from(".local/share/opencode/storage"))
+                .map(|home| home.join(".local/share/opencode"))
+                .unwrap_or_else(|| PathBuf::from(".local/share/opencode"))
         }
     }
 }

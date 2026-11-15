@@ -22,7 +22,14 @@ struct ParsedSession {
     session_id: Option<String>,
     cwd: Option<String>,
     title: Option<String>,
+    label: Option<String>,
     model: Option<String>,
+    tokens_used: Option<i64>,
+    parent_session_id: Option<String>,
+    subagent: bool,
+    seed_length: Option<i64>,
+    inherited_cut: Option<usize>,
+    unknown_records: u32,
     created_at: Option<i64>,
     last_active_at: Option<i64>,
     summary: Option<String>,
@@ -119,6 +126,7 @@ fn parse_session(path: &Path) -> Result<SessionMeta, String> {
     });
     let title = parsed
         .title
+        .or(parsed.label)
         .or_else(|| first_user_title(&parsed.messages))
         .or_else(|| project_dir.as_deref().and_then(path_basename));
     let fallback_ts = file_mtime_ms(path);
@@ -135,6 +143,21 @@ fn parse_session(path: &Path) -> Result<SessionMeta, String> {
         last_active_at: parsed.last_active_at.or(fallback_ts),
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(RESUME_COMMAND.to_string()),
+        archived: false,
+        tokens_used: parsed.tokens_used,
+        parent_session_id: parsed.parent_session_id,
+        unknown_records: parsed.unknown_records,
+        source_mtime: fallback_ts,
+        source_size: path
+            .metadata()
+            .ok()
+            .and_then(|value| i64::try_from(value.len()).ok()),
+        source_rank: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .and_then(log_generation)
+            .and_then(|(generation, _)| u8::try_from(generation).ok())
+            .unwrap_or(0),
     })
 }
 
@@ -146,14 +169,20 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
     for line in reader.lines() {
         let line = match line {
             Ok(line) => line,
-            Err(_) => break,
+            Err(_) => {
+                parsed.unknown_records = parsed.unknown_records.saturating_add(1);
+                break;
+            }
         };
         if line.trim().is_empty() {
             continue;
         }
         let row: Value = match serde_json::from_str(&line) {
             Ok(row) => row,
-            Err(_) => continue,
+            Err(_) => {
+                parsed.unknown_records = parsed.unknown_records.saturating_add(1);
+                continue;
+            }
         };
         if row.pointer("/surfaceOp/op").and_then(Value::as_str) == Some("replace") {
             continue;
@@ -165,12 +194,40 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
             parsed.last_active_at = Some(parsed.last_active_at.unwrap_or(0).max(ts));
         }
         let data = row.get("data").unwrap_or(&Value::Null);
+        if parsed.inherited_cut.is_none()
+            && parsed.seed_length.is_some_and(|length| {
+                row.get("seq")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|seq| seq >= length)
+            })
+        {
+            parsed.inherited_cut = Some(parsed.messages.len());
+        }
 
         match event_type {
             "session" => {
                 parsed.session_id = row.get("id").and_then(Value::as_str).map(str::to_string);
                 parsed.cwd = row.get("cwd").and_then(Value::as_str).map(str::to_string);
                 parsed.created_at = row.get("createdAt").and_then(timestamp_ms);
+                parsed.seed_length = row.get("seedLength").and_then(Value::as_i64);
+                parsed.parent_session_id = row
+                    .get("parentSession")
+                    .or_else(|| row.get("parentSessionId"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                parsed.subagent = row.get("origin").and_then(Value::as_str) == Some("subagent")
+                    || row
+                        .get("delegationDepth")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0)
+                        > 0;
+                if row
+                    .get("version")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|version| version > 4)
+                {
+                    parsed.unknown_records = parsed.unknown_records.saturating_add(1);
+                }
             }
             "session/title" => {
                 if let Some(title) = data.get("title").and_then(Value::as_str) {
@@ -206,8 +263,27 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
             }
             "assistant/message" => {
                 let message = data.get("message").unwrap_or(&Value::Null);
-                if let Some(model) = message.pointer("/source/model").and_then(Value::as_str) {
-                    parsed.model = Some(model.to_string());
+                let message_model = message
+                    .pointer("/source/model")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if message_model.is_some() {
+                    parsed.model = message_model.clone();
+                }
+                if let Some(usage) = data.get("usage") {
+                    let total = [
+                        "inputTokens",
+                        "outputTokens",
+                        "cacheReadTokens",
+                        "cacheWriteTokens",
+                    ]
+                    .iter()
+                    .filter_map(|key| usage.get(*key).and_then(Value::as_i64))
+                    .sum::<i64>();
+                    if total > 0 {
+                        parsed.tokens_used =
+                            Some(parsed.tokens_used.unwrap_or(0).saturating_add(total));
+                    }
                 }
                 for block in message
                     .get("content")
@@ -222,7 +298,11 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_string();
+                            let before = parsed.messages.len();
                             push_plain(&mut parsed, "assistant", content, ts, true);
+                            if parsed.messages.len() > before {
+                                parsed.messages.last_mut().unwrap().model = message_model.clone();
+                            }
                         }
                         Some("reasoning") => {
                             let content = block
@@ -232,14 +312,16 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
                                 .trim()
                                 .to_string();
                             if !content.is_empty() {
-                                parsed.messages.push(SessionMessage::structured(
+                                let mut reasoning = SessionMessage::structured(
                                     "assistant".to_string(),
                                     "thinking",
                                     None,
                                     None,
                                     content,
                                     ts,
-                                ));
+                                );
+                                reasoning.model = message_model.clone();
+                                parsed.messages.push(reasoning);
                             }
                         }
                         Some("tool-call") => {
@@ -253,16 +335,26 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
                                 tool_names.insert(call_id, name);
                             }
                             let content = format_arguments(block.get("arguments"));
-                            if !content.trim().is_empty() {
-                                parsed.messages.push(SessionMessage::structured(
-                                    "assistant".to_string(),
-                                    "tool_use",
-                                    name,
-                                    call_id,
-                                    content,
-                                    ts,
-                                ));
+                            let mut call = SessionMessage::structured(
+                                "assistant".to_string(),
+                                "tool_use",
+                                name.clone(),
+                                call_id,
+                                content,
+                                ts,
+                            );
+                            call.model = message_model.clone();
+                            if let Some(name) = name {
+                                call.tool_names.push(name);
                             }
+                            parsed.messages.push(call);
+                        }
+                        Some("image") | Some("file") => {
+                            parsed.messages.push(SessionMessage::plain(
+                                "assistant".to_string(),
+                                "[Image]".to_string(),
+                                ts,
+                            ));
                         }
                         _ => {}
                     }
@@ -285,20 +377,50 @@ fn parse_dsh_log(path: &Path) -> Result<ParsedSession, String> {
                     .cloned();
                 let content = block.get("content").map(extract_text).unwrap_or_default();
                 if !content.trim().is_empty() {
-                    parsed.messages.push(SessionMessage::structured(
+                    let mut result = SessionMessage::structured(
                         "tool".to_string(),
                         "tool_result",
                         name,
                         call_id,
                         content,
                         ts,
-                    ));
+                    );
+                    result.is_error = block.get("isError").and_then(Value::as_bool) == Some(true)
+                        || data.get("error").is_some_and(|value| !value.is_null());
+                    parsed.messages.push(result);
+                }
+            }
+            "session/end-seed" => {
+                if data.get("inherited").and_then(Value::as_bool) == Some(true) {
+                    parsed.inherited_cut = Some(parsed.messages.len());
+                }
+            }
+            "subagent/descriptor" => {
+                if parsed.label.is_none() {
+                    parsed.label = data
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .and_then(|value| normalize_title_candidate(value, 160));
                 }
             }
             _ => {}
         }
     }
 
+    if let Some(cut) = parsed.inherited_cut.filter(|cut| *cut > 0) {
+        parsed.messages.drain(..cut);
+        parsed.messages.insert(
+            0,
+            SessionMessage::structured(
+                "system".to_string(),
+                "meta",
+                None,
+                None,
+                "Inherited session history omitted".to_string(),
+                parsed.created_at,
+            ),
+        );
+    }
     Ok(parsed)
 }
 
@@ -556,5 +678,30 @@ mod tests {
         assert!(error.contains("Unexpected DSH session path layout"));
         assert!(project_dir.exists());
         assert!(path.exists());
+    }
+    #[test]
+    fn folds_fork_seed_and_collects_usage_and_parent() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.v4.jsonl");
+        let rows = [
+            r#"{"type":"session","version":4,"id":"child","createdAt":1761955200000,"cwd":"/work","origin":"subagent","parentSessionId":"parent"}"#,
+            r#"{"type":"user/message","seq":1,"time":1761955200001,"data":{"content":"inherited"}}"#,
+            r#"{"type":"session/end-seed","seq":2,"time":1761955200002,"data":{"inherited":true}}"#,
+            r#"{"type":"user/message","seq":3,"time":1761955200003,"data":{"content":"own request","source":{"kind":"user"}}}"#,
+            r#"{"type":"assistant/message","seq":4,"time":1761955200004,"data":{"message":{"source":{"model":"deepseek-v4"},"content":[{"type":"text","text":"own answer"}]},"usage":{"inputTokens":10,"outputTokens":4,"cacheReadTokens":2,"cacheWriteTokens":1}}}"#,
+        ];
+        fs::write(&path, rows.join("\n") + "\n").expect("write fork fixture");
+
+        let parsed = parse_dsh_log(&path).expect("parse fork fixture");
+        assert_eq!(parsed.parent_session_id.as_deref(), Some("parent"));
+        assert_eq!(parsed.tokens_used, Some(17));
+        assert!(!parsed
+            .messages
+            .iter()
+            .any(|message| message.content == "inherited"));
+        assert!(parsed
+            .messages
+            .iter()
+            .any(|message| message.content == "own request"));
     }
 }

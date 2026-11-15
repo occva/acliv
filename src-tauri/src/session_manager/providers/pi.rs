@@ -77,6 +77,10 @@ fn append_pi_message(
         .and_then(Value::as_str)
         .map(str::to_string);
     let ts = extract_pi_timestamp(value);
+    let model = value
+        .pointer("/message/model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     let Some(content) = value
         .get("message")
@@ -94,6 +98,8 @@ fn append_pi_message(
                 content,
                 ts,
                 Vec::new(),
+                model.clone(),
+                false,
             ));
         }
         return;
@@ -112,6 +118,8 @@ fn append_pi_message(
                 content,
                 ts,
                 Vec::new(),
+                model.clone(),
+                false,
             ));
         }
         return;
@@ -141,6 +149,8 @@ fn append_pi_message(
                 content,
                 ts,
                 name.into_iter().collect(),
+                model.clone(),
+                value.pointer("/message/isError").and_then(Value::as_bool) == Some(true),
             ));
         }
         return;
@@ -169,6 +179,8 @@ fn append_pi_message(
                     content,
                     ts,
                     Vec::new(),
+                    model.clone(),
+                    false,
                 ));
             }
             "thinking" => {
@@ -191,6 +203,8 @@ fn append_pi_message(
                     content,
                     ts,
                     Vec::new(),
+                    model.clone(),
+                    false,
                 ));
             }
             "toolCall" => {
@@ -211,6 +225,23 @@ fn append_pi_message(
                     content,
                     ts,
                     name.into_iter().collect(),
+                    model.clone(),
+                    false,
+                ));
+            }
+            "image" | "image_url" => {
+                messages.push(pi_message(
+                    msg_uuid.clone(),
+                    parent_uuid.clone(),
+                    role.clone(),
+                    "message",
+                    None,
+                    None,
+                    "[Image]".to_string(),
+                    ts,
+                    Vec::new(),
+                    model.clone(),
+                    false,
                 ));
             }
             _ => {}
@@ -229,6 +260,8 @@ fn pi_message(
     content: String,
     ts: Option<i64>,
     tool_names: Vec<String>,
+    model: Option<String>,
+    is_error: bool,
 ) -> SessionMessage {
     SessionMessage {
         msg_uuid,
@@ -241,6 +274,9 @@ fn pi_message(
         ts,
         is_sidechain: false,
         tool_names,
+        model,
+        is_error,
+        truncated: false,
     }
 }
 
@@ -297,6 +333,55 @@ fn delete_session_for(
     Ok(true)
 }
 
+#[derive(Default)]
+struct PiStats {
+    model: Option<String>,
+    tokens_used: Option<i64>,
+    unknown_records: u32,
+}
+
+fn scan_pi_stats(path: &Path) -> PiStats {
+    let Ok(file) = File::open(path) else {
+        return PiStats::default();
+    };
+    let mut stats = PiStats::default();
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else {
+            stats.unknown_records = stats.unknown_records.saturating_add(1);
+            break;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            stats.unknown_records = stats.unknown_records.saturating_add(1);
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("session" | "model_change" | "thinking_level_change") => {}
+            Some("message") => {
+                let Some(message) = value.get("message") else {
+                    stats.unknown_records = stats.unknown_records.saturating_add(1);
+                    continue;
+                };
+                if let Some(model) = message.get("model").and_then(Value::as_str) {
+                    stats.model = Some(model.to_string());
+                }
+                if message.get("role").and_then(Value::as_str) == Some("assistant") {
+                    if let Some(tokens) = message
+                        .pointer("/usage/totalTokens")
+                        .and_then(Value::as_i64)
+                        .filter(|value| *value >= 0)
+                    {
+                        stats.tokens_used =
+                            Some(stats.tokens_used.unwrap_or(0).saturating_add(tokens));
+                    }
+                }
+            }
+            None if value.get("role").is_some() || value.get("content").is_some() => {}
+            _ => stats.unknown_records = stats.unknown_records.saturating_add(1),
+        }
+    }
+    stats
+}
+
 fn parse_session(path: &Path, provider_id: &str) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 40, 30).ok()?;
 
@@ -342,6 +427,8 @@ fn parse_session(path: &Path, provider_id: &str) -> Option<SessionMeta> {
             break;
         }
     }
+    let stats = scan_pi_stats(path);
+    model = stats.model.or(model);
 
     let session_id = session_id
         .or_else(|| path.file_stem()?.to_str().map(str::to_string))
@@ -369,6 +456,13 @@ fn parse_session(path: &Path, provider_id: &str) -> Option<SessionMeta> {
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command,
+        archived: false,
+        tokens_used: stats.tokens_used,
+        parent_session_id: None,
+        unknown_records: stats.unknown_records,
+        source_mtime: None,
+        source_size: None,
+        source_rank: 1,
     })
 }
 
@@ -573,5 +667,29 @@ mod tests {
         assert_eq!(messages[3].role, "tool");
         assert_eq!(messages[3].kind, "tool_result");
         assert_eq!(messages[3].call_id.as_deref(), Some("call_1"));
+    }
+    #[test]
+    fn captures_model_usage_images_and_tool_errors() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        let content = [
+            r#"{"type":"session","id":"pi-current","timestamp":"2026-11-01T00:00:00Z","cwd":"/work"}"#,
+            r#"{"type":"message","timestamp":"2026-11-01T00:00:01Z","message":{"role":"assistant","model":"pi-model","usage":{"totalTokens":42},"content":[{"type":"image","mediaType":"image/png"},{"type":"toolCall","id":"call-e","name":"read","arguments":{}}]}}"#,
+            r#"{"type":"message","timestamp":"2026-11-01T00:00:02Z","message":{"role":"toolResult","toolCallId":"call-e","isError":true,"content":[{"type":"text","text":"failed"}]}}"#,
+        ]
+        .join("\n");
+        fs::write(&path, content).expect("write Pi fixture");
+
+        let messages = load_messages(&path).expect("load Pi fixture");
+        assert!(messages.iter().any(|message| message.content == "[Image]"));
+        assert!(messages
+            .iter()
+            .any(|message| message.model.as_deref() == Some("pi-model")));
+        assert!(messages
+            .iter()
+            .any(|message| message.kind == "tool_result" && message.is_error));
+        let meta = parse_session(&path, PROVIDER_ID).expect("parse Pi metadata");
+        assert_eq!(meta.model.as_deref(), Some("pi-model"));
+        assert_eq!(meta.tokens_used, Some(42));
     }
 }

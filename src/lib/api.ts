@@ -65,6 +65,10 @@ export interface SessionMeta {
     lastActiveAt?: number;    // 毫秒时间戳
     sourcePath?: string;      // 源文件路径，用于加载消息详情
     resumeCommand?: string;   // 恢复会话的 CLI 命令
+    archived?: boolean;
+    tokensUsed?: number;
+    parentSessionId?: string;
+    unknownRecords?: number;
 }
 
 /** 会话消息 */
@@ -77,6 +81,9 @@ export interface SessionMessage {
     callId?: string;
     content: string;
     ts?: number;     // 毫秒时间戳（可选）
+    model?: string;
+    isError?: boolean;
+    truncated?: boolean;
 }
 
 export interface DeleteSessionOptions {
@@ -178,6 +185,9 @@ export interface IndexedMessage {
     ts?: number;
     isSidechain: boolean;
     toolNames: string[];
+    model?: string;
+    isError: boolean;
+    truncated: boolean;
     seq: number;
 }
 

@@ -30,6 +30,20 @@
 - `launch_session_terminal`：Windows/macOS 下启动终端执行恢复命令
 - `acliv-web`：独立 Web 入口（`/api/*`），复用同一套 `session_manager`
 
+Provider 格式覆盖：
+
+| Provider | 当前格式与兼容范围 |
+| --- | --- |
+| Claude | JSONL、fork 继承段、sidechain/子代理、custom/AI title、compact/thinking、工具错误 |
+| Codex | 活动与归档 rollout、`.jsonl`/`.jsonl.zst`、`state_5.sqlite` 元数据、内部线程过滤、spawn/fork、reasoning 与扩展工具事件 |
+| Gemini | 当前 JSONL `$set.messages` 快照、旧版单文件 JSON、`projects.json` 项目路径映射 |
+| OpenClaw | 当前 `openclaw-agent.sqlite` 窗口/活动分支与旧版 JSONL，迁移双副本自动裁决 |
+| OpenCode | `opencode.db`/`opencode-next.db`、v1 `message + part`、v2 `session_message`、早期 `session_v2` 与旧版 storage 文件树 |
+| Pi / OMP | 共用 JSONL 格式，树关系、model/usage、thinking、图片占位和工具错误 |
+| DSH | v0–v4、明文/多帧 Zstandard、最新代选择、fork seed、子代理、usage 与工具错误 |
+
+解析后的列表、详情和搜索共用同一消息语义。未知或损坏记录会写入索引同步诊断，不再静默当作完整解析；同 Provider、同原生会话 ID 的多份来源按格式等级与文件指纹裁决。
+
 
 ## 技术栈
 

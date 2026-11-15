@@ -370,6 +370,9 @@ pub fn get_session_messages(
               ts,
               is_sidechain,
               tool_names,
+              model,
+              is_error,
+              truncated,
               seq
             FROM messages
             WHERE session_id = ?
@@ -394,7 +397,10 @@ pub fn get_session_messages(
                 is_sidechain: row.get::<_, bool>(8)?,
                 tool_names: serde_json::from_str::<Vec<String>>(row.get::<_, String>(9)?.as_str())
                     .unwrap_or_default(),
-                seq: row.get(10)?,
+                model: row.get(10)?,
+                is_error: row.get::<_, bool>(11)?,
+                truncated: row.get::<_, bool>(12)?,
+                seq: row.get(13)?,
             })
         })
         .map_err(|e| {

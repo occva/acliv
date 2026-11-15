@@ -79,6 +79,9 @@
       content: string;
       ts?: number;
       seq: number;
+      model?: string;
+      isError?: boolean;
+      truncated?: boolean;
   }
   interface ConversationMessageView {
       role: string;
@@ -88,6 +91,9 @@
       content: string;
       timestamp: string;
       seq: number;
+      model?: string;
+      isError?: boolean;
+      truncated?: boolean;
   }
   interface MessageBlock {
       role: string;
@@ -100,6 +106,9 @@
       seqEnd: number;
       blocks?: MessageBlock[];
       runCount?: number;
+      model?: string;
+      isError?: boolean;
+      truncated?: boolean;
   }
   type UiMessage =
       | { kind: 'key'; key: TranslationKey; params?: TranslationParams }
@@ -139,15 +148,15 @@
       key: string;
       label: string;
       preview: string;
-      top: number;
+      top: number | null;
   }
   const INDEX_LIBRARY_PAGE_SIZE = 50;
   const AUTO_SYNC_INTERVAL_WEB_MS = 300000;
   const AUTO_SYNC_INTERVAL_DESKTOP_MS = 300000;
   const DETAIL_SCROLL_STORAGE_PREFIX = 'acliv:detail-scroll:';
   const DETAIL_SCROLL_BOTTOM_THRESHOLD = 40;
-  const DETAIL_PROGRESS_ANCHOR_OFFSET = 10;
-  const DETAIL_PROGRESS_ANCHOR_SPACING = 14;
+  const DETAIL_PROGRESS_HOVER_OPEN_MS = 180;
+  const DETAIL_PROGRESS_HOVER_CLOSE_MS = 120;
   const SOURCE_STORAGE_KEY = 'source';
   const PROJECT_LIST_PATH_MODE_STORAGE_KEY = 'acliv:project-list-path-mode';
   const SESSION_ID_VISIBILITY_STORAGE_KEY = 'acliv:show-session-ids';
@@ -482,10 +491,11 @@
   let messagesContainerElement = $state<HTMLDivElement | null>(null);
   let conversationProgressAnchors = $state<ConversationProgressAnchor[]>([]);
   let activeConversationProgressKey = $state<string | null>(null);
-  let isConversationProgressExpanded = $state(false);
+  let hoveredConversationProgressKey = $state<string | null>(null);
   let conversationProgressResizeObserver: ResizeObserver | null = null;
   let conversationProgressFrame = 0;
   let processDetailsTimer: ReturnType<typeof setTimeout> | null = null;
+  let conversationProgressPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 
   function hasStoredWebToken(): boolean {
     if (!isWebMode) return false;
@@ -1133,6 +1143,7 @@
     if (watcherReloadTimer) clearTimeout(watcherReloadTimer);
     if (conversationProgressFrame) cancelAnimationFrame(conversationProgressFrame);
     if (processDetailsTimer) clearTimeout(processDetailsTimer);
+    if (conversationProgressPreviewTimer) clearTimeout(conversationProgressPreviewTimer);
     conversationProgressResizeObserver?.disconnect();
     countJobToken++;
     for (const unlisten of searchIndexEventUnsubscribers) {
@@ -1428,11 +1439,18 @@
           s.sessionId === sessionId && (!sourceType || s.providerId === sourceType)) ?? null;
   }
 
+  function canDeleteSession(session: SessionMeta | null): boolean {
+      if (!session?.sourcePath) return false;
+      const databaseBacked = (session.providerId === 'opencode' || session.providerId === 'openclaw')
+          && session.sourcePath.includes('#');
+      return !databaseBacked;
+  }
+
   function openDeleteDialog() {
       const target = currentConversation
           ? getSessionById(currentConversation.session_id, currentConversation.source_type)
           : null;
-      if (!target?.sourcePath || isDeleting) return;
+      if (!canDeleteSession(target) || isDeleting) return;
       deleteTarget = target;
   }
 
@@ -1654,6 +1672,9 @@
               last.content = mergeMessageContent(last.content, content);
               last.timestamp = timestamp || last.timestamp;
               last.seqEnd = seq;
+              last.model = message.model || last.model;
+              last.isError = last.isError || message.isError;
+              last.truncated = last.truncated || message.truncated;
               continue;
           }
 
@@ -1663,6 +1684,9 @@
               name: message.name,
               callId: message.callId,
               content,
+              model: message.model,
+              isError: message.isError,
+              truncated: message.truncated,
               timestamp,
               seqStart: seq,
               seqEnd: seq,
@@ -1684,6 +1708,9 @@
           seqEnd: toolBlocks[toolBlocks.length - 1]?.seqEnd ?? toolBlocks[0]?.seqStart ?? 0,
           blocks: toolBlocks,
           runCount: runBlocks.length || toolBlocks.length,
+          model: toolBlocks.find(block => block.model)?.model,
+          isError: toolBlocks.some(block => block.isError),
+          truncated: toolBlocks.some(block => block.truncated),
       };
   }
 
@@ -1761,15 +1788,19 @@
   }
 
   function getMessageBlockClass(block: MessageBlock): string {
-      if (isInstructionContextBlock(block)) return 'instruction-message';
-      if (block.kind === 'tool_group') return 'tool-group-message';
-      if (block.kind === 'function_call' || block.kind === 'tool_use') return 'tool-call-message';
-      if (block.kind === 'function_call_output' || block.kind === 'tool_result') return 'tool-result-message';
-      const role = block.role.toLowerCase();
-      if (role === 'assistant') return 'assistant-message';
-      if (role === 'developer') return 'developer-message';
-      if (role === 'human' || role === 'user') return 'user-message';
-      return 'tool-result-message';
+      let base: string;
+      if (isInstructionContextBlock(block)) base = 'instruction-message';
+      else if (block.kind === 'tool_group') base = 'tool-group-message';
+      else if (block.kind === 'function_call' || block.kind === 'tool_use') base = 'tool-call-message';
+      else if (block.kind === 'function_call_output' || block.kind === 'tool_result') base = 'tool-result-message';
+      else {
+          const role = block.role.toLowerCase();
+          if (role === 'assistant') base = 'assistant-message';
+          else if (role === 'developer') base = 'developer-message';
+          else if (role === 'human' || role === 'user') base = 'user-message';
+          else base = 'tool-result-message';
+      }
+      return block.isError ? `${base} tool-error-message` : base;
   }
 
   function isInstructionContextBlock(block: MessageBlock): boolean {
@@ -1818,11 +1849,22 @@
   function getConversationProgressPreview(block: MessageBlock): string {
       const normalized = getConversationProgressText(block.content);
       if (!normalized) return t('detail.empty_progress');
-      return Array.from(normalized).slice(0, 15).join('');
+      return Array.from(normalized).slice(0, 32).join('');
   }
 
   function getConversationProgressLabel(block: MessageBlock): string {
       return getConversationProgressText(block.content) || t('detail.empty_progress');
+  }
+
+  function buildConversationProgressAnchors(blocks: MessageBlock[]): ConversationProgressAnchor[] {
+      return blocks
+          .filter(isConversationProgressBlock)
+          .map(block => ({
+              key: getConversationProgressKey(block),
+              label: getConversationProgressLabel(block),
+              preview: getConversationProgressPreview(block),
+              top: null,
+          }));
   }
 
   function isCollapsibleBlock(block: MessageBlock): boolean {
@@ -1870,7 +1912,9 @@
   function clearConversationProgress() {
       conversationProgressAnchors = [];
       activeConversationProgressKey = null;
-      isConversationProgressExpanded = false;
+      hoveredConversationProgressKey = null;
+      if (conversationProgressPreviewTimer) clearTimeout(conversationProgressPreviewTimer);
+      conversationProgressPreviewTimer = null;
   }
 
   function scheduleConversationProgressUpdate() {
@@ -1915,17 +1959,21 @@
           return;
       }
 
-      const readingLine = conversationDetailElement.scrollTop
-          + Math.min(conversationDetailElement.clientHeight * 0.25, 120);
-      let activeKey = anchors[0].key;
-      for (const anchor of anchors) {
-          if (anchor.top <= readingLine) {
-              activeKey = anchor.key;
-              continue;
+      const readingLine = conversationDetailElement.scrollTop + 32;
+      let low = 0;
+      let high = anchors.length - 1;
+      let activeIndex = -1;
+      while (low <= high) {
+          const middle = (low + high) >> 1;
+          const top = anchors[middle]?.top;
+          if (top !== null && top !== undefined && top <= readingLine) {
+              activeIndex = middle;
+              low = middle + 1;
+          } else {
+              high = middle - 1;
           }
-          break;
       }
-      activeConversationProgressKey = activeKey;
+      activeConversationProgressKey = anchors[Math.max(activeIndex, 0)]?.key ?? null;
   }
 
   function updateConversationProgressAnchors() {
@@ -1937,58 +1985,60 @@
       const elements = Array.from(
           conversationDetailElement.querySelectorAll<HTMLElement>('[data-progress-anchor="true"]'),
       );
-      if (elements.length === 0) {
-          clearConversationProgress();
-          return;
-      }
-
-      const anchors = elements.map((element, index) => {
-          const top = getConversationAnchorOffset(element);
-          return {
-              key: element.dataset.progressKey || `anchor-${index}`,
-              label: element.dataset.progressLabel || element.dataset.progressPreview || t('detail.user_message'),
-              preview: element.dataset.progressPreview || t('detail.user_message'),
-              top,
-          };
+      const elementsByKey = new Map(
+          elements.map(element => [element.dataset.progressKey, element] as const),
+      );
+      let changed = false;
+      const anchors = conversationProgressAnchors.map(anchor => {
+          const element = elementsByKey.get(anchor.key);
+          const top = element ? getConversationAnchorOffset(element) : null;
+          if (top !== anchor.top) changed = true;
+          return top === anchor.top ? anchor : { ...anchor, top };
       });
-
-      conversationProgressAnchors = anchors;
+      if (changed) conversationProgressAnchors = anchors;
       updateConversationProgressActiveAnchor(anchors);
   }
 
   function jumpToConversationProgressAnchor(anchor: ConversationProgressAnchor) {
       if (!conversationDetailElement) return;
 
+      const target = conversationDetailElement.querySelector<HTMLElement>(
+          `[data-progress-anchor="true"][data-progress-key="${CSS.escape(anchor.key)}"]`,
+      );
+      const top = target ? getConversationAnchorOffset(target) : anchor.top;
+      if (top === null) return;
+
       activeConversationProgressKey = anchor.key;
       conversationDetailElement.scrollTo({
-          top: Math.max(anchor.top - 16, 0),
+          top: Math.max(top - 16, 0),
           behavior: 'smooth',
       });
   }
 
   function getConversationProgressNavHeight(count: number): string {
-      const height = DETAIL_PROGRESS_ANCHOR_OFFSET * 2
-          + Math.max(count - 1, 0) * DETAIL_PROGRESS_ANCHOR_SPACING
-          + 8;
-      return `${height}px`;
+      return `min(${Math.max(48, count * 12)}px, calc(100vh - 236px))`;
   }
 
-  function getConversationProgressAnchorTop(index: number): string {
-      return `${DETAIL_PROGRESS_ANCHOR_OFFSET + index * DETAIL_PROGRESS_ANCHOR_SPACING}px`;
+  function openConversationProgressPreview(key: string) {
+      if (conversationProgressPreviewTimer) clearTimeout(conversationProgressPreviewTimer);
+      conversationProgressPreviewTimer = setTimeout(() => {
+          conversationProgressPreviewTimer = null;
+          hoveredConversationProgressKey = key;
+      }, DETAIL_PROGRESS_HOVER_OPEN_MS);
   }
 
-  function getConversationProgressMarkWidth(anchor: ConversationProgressAnchor): string {
-      const contentLength = Array.from(anchor.label.trim()).length;
-      const width = Math.ceil(contentLength / 2);
-      return `${Math.min(Math.max(width, 8), 24)}px`;
+  function closeConversationProgressPreview() {
+      if (conversationProgressPreviewTimer) clearTimeout(conversationProgressPreviewTimer);
+      conversationProgressPreviewTimer = setTimeout(() => {
+          conversationProgressPreviewTimer = null;
+          hoveredConversationProgressKey = null;
+      }, DETAIL_PROGRESS_HOVER_CLOSE_MS);
   }
 
-  function openConversationProgressDirectory() {
-      isConversationProgressExpanded = true;
-  }
-
-  function closeConversationProgressDirectory() {
-      isConversationProgressExpanded = false;
+  function focusConversationProgressPreview(key: string) {
+      if (conversationProgressPreviewTimer) clearTimeout(conversationProgressPreviewTimer);
+      conversationProgressPreviewTimer = null;
+      hoveredConversationProgressKey = key;
   }
 
   async function loadIndexedConversationMessages(target: SessionMeta): Promise<ConversationMessage[]> {
@@ -2001,6 +2051,9 @@
           callId: msg.callId,
           content: msg.content,
           ts: msg.ts,
+          model: msg.model,
+          isError: msg.isError,
+          truncated: msg.truncated,
           seq: msg.seq,
       }));
   }
@@ -2031,6 +2084,9 @@
           callId: msg.callId,
           content: msg.content,
           ts: msg.ts,
+          model: msg.model,
+          isError: msg.isError,
+          truncated: msg.truncated,
           seq: index,
       }));
   }
@@ -2104,6 +2160,9 @@
       renderedProcessDetails = showProcessDetails;
       hasMountedProcessDetails = showProcessDetails;
       currentConversation = transformConversation(convLike as any);
+      conversationProgressAnchors = buildConversationProgressAnchors(currentConversation.blocks);
+      activeConversationProgressKey = conversationProgressAnchors[0]?.key ?? null;
+      void tick().then(scheduleConversationProgressUpdate);
       const matchRole = searchMatch?.match_role?.toLowerCase();
       const canHighlight = (matchRole === 'assistant' || matchRole === 'user' || matchRole === 'human')
           && searchMatch?.match_seq !== undefined;
@@ -2155,6 +2214,9 @@
               callId: msg.callId,
               content: msg.content,
               ts: msg.ts,
+              model: msg.model,
+              isError: msg.isError,
+              truncated: msg.truncated,
               seq: index,
           }));
 
@@ -2191,11 +2253,17 @@
                   callId: message.callId,
                   content: message.content,
                   timestamp: formatTimestamp(message.ts),
+                  model: message.model,
+                  isError: message.isError,
+                  truncated: message.truncated,
                   seq: message.seq,
               })),
           };
 
           currentConversation = transformConversation(convLike as any);
+          conversationProgressAnchors = buildConversationProgressAnchors(currentConversation.blocks);
+          activeConversationProgressKey = conversationProgressAnchors[0]?.key ?? null;
+          void tick().then(scheduleConversationProgressUpdate);
           conversations = currentProject
               ? buildConversations(allSessions, currentSource, currentProject)
               : conversations;
@@ -3286,7 +3354,7 @@
                            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 12a4 4 0 100-8 4 4 0 000 8zM8 0a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 0zm0 13a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 13zM2.343 2.343a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L2.343 3.05a.5.5 0 010-.707zm11.314 8.486a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM12.914 2.343a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM3.05 12.207a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L3.05 12.914a.5.5 0 010-.707zM13 8a.5.5 0 01.5.5h2a.5.5 0 010-1h-2A.5.5 0 0113 8zM0 8a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2A.5.5 0 010 8z"></path></svg>
                          {/if}
                     </button>
-                    <button class="btn-danger" onclick={openDeleteDialog} type="button" disabled={isDeleting}>
+                    <button class="btn-danger" onclick={openDeleteDialog} type="button" disabled={isDeleting || !canDeleteSession(selectedSession)}>
                         <span class="icon-inline" aria-hidden="true">
                             {@html getIcon('trash', 15)}
                         </span>
@@ -3516,8 +3584,6 @@
                                 class:search-hit={isBlockSearchMatch(block)}
                                 data-progress-anchor={isConversationProgressBlock(block) ? 'true' : undefined}
                                 data-progress-key={isConversationProgressBlock(block) ? getConversationProgressKey(block) : undefined}
-                                data-progress-label={isConversationProgressBlock(block) ? getConversationProgressLabel(block) : undefined}
-                                data-progress-preview={isConversationProgressBlock(block) ? getConversationProgressPreview(block) : undefined}
                             >
                                 <div class="message-header">
                                     <div class="message-header-main">
@@ -3558,39 +3624,35 @@
         {#if conversationProgressAnchors.length > 0}
             <div
                 class="detail-progress-nav"
-                class:expanded={isConversationProgressExpanded}
                 style={`height: ${getConversationProgressNavHeight(conversationProgressAnchors.length)}`}
                 role="group"
                 aria-label={t('detail.conversation_progress')}
-                onmouseenter={openConversationProgressDirectory}
-                onmouseleave={closeConversationProgressDirectory}
+                onmouseleave={closeConversationProgressPreview}
             >
-                {#each conversationProgressAnchors as anchor, index}
-                    <button
-                        class="detail-progress-anchor detail-progress-mark"
-                        class:active={anchor.key === activeConversationProgressKey}
-                        style={`top: ${getConversationProgressAnchorTop(index)}; --progress-mark-width: ${getConversationProgressMarkWidth(anchor)}`}
-                        type="button"
-                        aria-label={anchor.label}
-                        onclick={() => jumpToConversationProgressAnchor(anchor)}
-                    ></button>
-                {/each}
-                <div class="detail-progress-directory">
-                    <div class="detail-progress-directory-title">{t('detail.conversation_progress')}</div>
-                    <div class="detail-progress-directory-list">
-                        {#each conversationProgressAnchors as anchor}
-                            <button
-                                class="detail-progress-item"
-                                class:active={anchor.key === activeConversationProgressKey}
-                                type="button"
-                                title={anchor.label}
-                                onclick={() => jumpToConversationProgressAnchor(anchor)}
-                            >
-                                <span class="detail-progress-item-line" aria-hidden="true"></span>
-                                <span class="detail-progress-item-label">{anchor.label}</span>
-                            </button>
-                        {/each}
-                    </div>
+                <div class="detail-progress-marks">
+                    {#each conversationProgressAnchors as anchor}
+                        <button
+                            class="detail-progress-anchor detail-progress-mark"
+                            class:active={anchor.key === activeConversationProgressKey}
+                            type="button"
+                            data-progress-key={anchor.key}
+                            aria-current={anchor.key === activeConversationProgressKey ? 'location' : undefined}
+                            aria-label={anchor.label}
+                            onmouseenter={() => openConversationProgressPreview(anchor.key)}
+                            onfocus={() => focusConversationProgressPreview(anchor.key)}
+                            onblur={closeConversationProgressPreview}
+                            onclick={() => jumpToConversationProgressAnchor(anchor)}
+                        >
+                            {#if hoveredConversationProgressKey === anchor.key}
+                                <span class="detail-progress-preview" aria-hidden="true">
+                                    <span class="detail-progress-preview-label">{anchor.preview}</span>
+                                    <svg class="detail-progress-preview-icon" viewBox="0 0 16 16" fill="none">
+                                        <path d="M4 2.75A1.75 1.75 0 0 1 5.75 1h4.5A1.75 1.75 0 0 1 12 2.75v11l-4-2.4-4 2.4v-11Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                    </svg>
+                                </span>
+                            {/if}
+                        </button>
+                    {/each}
                 </div>
             </div>
         {/if}

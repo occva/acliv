@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::UNIX_EPOCH;
 
 use regex::Regex;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
 use crate::paths::get_codex_sessions_dir;
@@ -12,7 +14,7 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, log_scan_error, normalize_title_candidate, parse_timestamp_to_ms, path_basename,
-    read_head_tail_lines, truncate_summary,
+    truncate_summary,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -31,125 +33,387 @@ static AGENTS_INSTRUCTIONS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?im)^\s*#\s*(?:AGENTS|CLAUDE|AGENT)\.md instructions[^\n]*(?:\n|$)").unwrap()
 });
 
+#[derive(Debug, Clone, Default)]
+struct StateRow {
+    id: String,
+    cwd: Option<String>,
+    title: Option<String>,
+    tokens_used: Option<i64>,
+    archived: bool,
+    model: Option<String>,
+    created_at: Option<i64>,
+    updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RolloutParse {
+    session_id: Option<String>,
+    cwd: Option<String>,
+    model: Option<String>,
+    created_at: Option<i64>,
+    last_active_at: Option<i64>,
+    title: Option<String>,
+    summary: Option<String>,
+    tokens_used: Option<i64>,
+    parent_session_id: Option<String>,
+    spawned: bool,
+    internal: bool,
+    unknown_records: u32,
+    messages: Vec<SessionMessage>,
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_codex_sessions_dir();
-    let title_index = load_session_title_index(&root);
-    let history_title_index = load_history_title_index(&root);
+    let sessions_dir = get_codex_sessions_dir();
+    let home = codex_home(&sessions_dir);
+    let archived_dir = home.join("archived_sessions");
+    let title_index = load_session_title_index(&sessions_dir);
+    let history_title_index = load_history_title_index(&sessions_dir);
+    let state_index = load_state_index(&home.join("state_5.sqlite"));
     let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+    collect_rollout_files(&sessions_dir, &mut files);
+    collect_rollout_files(&archived_dir, &mut files);
 
-    let mut sessions = Vec::new();
-    for path in files {
-        if let Some(meta) = parse_session(&path, &title_index, &history_title_index) {
-            sessions.push(meta);
-        }
-    }
-
-    sessions
+    files
+        .into_iter()
+        .filter_map(|path| {
+            let head = read_first_value(&path);
+            if head
+                .as_ref()
+                .and_then(|value| value.get("payload"))
+                .is_some_and(|payload| {
+                    matches!(thread_disposition(payload), ThreadDisposition::Internal)
+                })
+            {
+                return None;
+            }
+            let inferred_id = head
+                .as_ref()
+                .and_then(|value| value.pointer("/payload/id"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| infer_session_id_from_filename(&path));
+            let file_key = rollout_file_name(&path).map(str::to_string);
+            let state = file_key
+                .as_ref()
+                .and_then(|key| state_index.get(key))
+                .or_else(|| inferred_id.as_ref().and_then(|id| state_index.get(id)));
+            parse_session_with_state(
+                &path,
+                &title_index,
+                &history_title_index,
+                state,
+                path.starts_with(&archived_dir),
+            )
+        })
+        .collect()
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
-    let reader = BufReader::new(file);
-    let mut messages = Vec::new();
-    let mut call_names = HashMap::new();
+    parse_rollout(path).map(|parsed| parsed.messages)
+}
+
+fn parse_rollout(path: &Path) -> Result<RolloutParse, String> {
+    let reader = open_rollout(path)?;
+    let mut parsed = RolloutParse::default();
+    let mut call_names = HashMap::<String, String>::new();
+    let mut event_fallback = Vec::new();
+    let mut current_model = None;
+    let mut inherited_cut = false;
+    let mut history_start = None;
 
     for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        let line = line.map_err(|e| format!("Failed to read Codex rollout: {e}"))?;
+        if line.trim().is_empty() {
             continue;
         }
-
-        let payload = match value.get("payload") {
-            Some(payload) => payload,
-            None => continue,
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(_) => {
+                parsed.unknown_records = parsed.unknown_records.saturating_add(1);
+                continue;
+            }
         };
-        let payload_type = payload
+        let ts = value.get("timestamp").and_then(timestamp_ms);
+        if parsed.created_at.is_none() {
+            parsed.created_at = ts;
+        }
+        if ts.is_some() {
+            parsed.last_active_at = ts;
+        }
+        if parsed.spawned && !inherited_cut {
+            if let (Some(start), Some(ordinal)) =
+                (history_start, value.get("ordinal").and_then(Value::as_i64))
+            {
+                if ordinal >= start {
+                    parsed.messages.clear();
+                    event_fallback.clear();
+                    call_names.clear();
+                    inherited_cut = true;
+                }
+            }
+        }
+
+        let row_type = value
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-
-        match payload_type {
-            "message" => {
-                let role = payload
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string();
-                let content = extract_message_content(payload.get("content"), &role);
-                if content.trim().is_empty() {
-                    continue;
-                }
-                messages.push(SessionMessage::plain(role, content, ts));
+        if row_type == "compacted" {
+            parsed.messages.push(SessionMessage::structured(
+                "system".to_string(),
+                "compact_summary",
+                None,
+                None,
+                "Context compacted".to_string(),
+                ts,
+            ));
+            continue;
+        }
+        let Some(payload) = value.get("payload") else {
+            if !matches!(
+                row_type,
+                "world_state" | "inter_agent_communication_metadata"
+            ) {
+                parsed.unknown_records = parsed.unknown_records.saturating_add(1);
             }
-            "function_call" => {
-                let name = payload
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(|value| value.to_string());
-                let call_id = payload
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .map(|value| value.to_string());
-                if let (Some(call_id), Some(name)) = (call_id.clone(), name.clone()) {
-                    call_names.insert(call_id, name);
-                }
+            continue;
+        };
 
-                let content = format_function_call_content(payload);
-                if content.trim().is_empty() {
-                    continue;
+        match row_type {
+            "session_meta" => {
+                parsed.session_id = payload
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                parsed.cwd = payload
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                match thread_disposition(payload) {
+                    ThreadDisposition::User => {}
+                    ThreadDisposition::Internal => parsed.internal = true,
+                    ThreadDisposition::Spawned(parent) => {
+                        parsed.spawned = true;
+                        parsed.parent_session_id = parent;
+                        history_start = payload
+                            .get("subagent_history_start_ordinal")
+                            .and_then(Value::as_i64);
+                    }
                 }
-
-                messages.push(SessionMessage::structured(
-                    "assistant".to_string(),
-                    "function_call",
-                    name,
-                    call_id,
-                    content,
-                    ts,
-                ));
             }
-            "function_call_output" => {
-                let call_id = payload
-                    .get("call_id")
+            "turn_context" => {
+                current_model = payload
+                    .get("model")
                     .and_then(Value::as_str)
-                    .map(|value| value.to_string());
-                let name = call_id
-                    .as_ref()
-                    .and_then(|value| call_names.get(value))
-                    .cloned();
-                let content = payload
-                    .get("output")
+                    .map(str::to_string);
+                if current_model.is_some() {
+                    parsed.model = current_model.clone();
+                }
+                if parsed.cwd.is_none() {
+                    parsed.cwd = payload
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+            }
+            "response_item" => {
+                let payload_type = payload
+                    .get("type")
                     .and_then(Value::as_str)
-                    .map(|value| value.trim().to_string())
                     .unwrap_or_default();
-                if content.is_empty() {
-                    continue;
+                match payload_type {
+                    "message" => {
+                        let role = payload
+                            .get("role")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let content = extract_message_content(payload.get("content"), &role);
+                        if content.trim().is_empty() {
+                            continue;
+                        }
+                        if parsed.title.is_none() && role == "user" {
+                            parsed.title = normalize_codex_title_value(&content);
+                        }
+                        parsed.summary = Some(content.clone());
+                        let mut message = SessionMessage::plain(role, content, ts);
+                        message.model = current_model.clone();
+                        parsed.messages.push(message);
+                    }
+                    "reasoning" => {
+                        let content = payload
+                            .get("summary")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|item| item.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        if !content.trim().is_empty() {
+                            let mut message = SessionMessage::structured(
+                                "assistant".to_string(),
+                                "thinking",
+                                None,
+                                None,
+                                content,
+                                ts,
+                            );
+                            message.model = current_model.clone();
+                            parsed.messages.push(message);
+                        }
+                    }
+                    "function_call" | "custom_tool_call" | "local_shell_call" => {
+                        let name = payload
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("exec")
+                            .to_string();
+                        let call_id = payload
+                            .get("call_id")
+                            .or_else(|| payload.get("id"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        if let Some(call_id) = call_id.as_ref() {
+                            call_names.insert(call_id.clone(), name.clone());
+                        }
+                        let content = format_function_call_content(payload);
+                        let mut message = SessionMessage::structured(
+                            "assistant".to_string(),
+                            "function_call",
+                            Some(name.clone()),
+                            call_id,
+                            content,
+                            ts,
+                        );
+                        message.tool_names.push(name);
+                        message.model = current_model.clone();
+                        parsed.messages.push(message);
+                    }
+                    "function_call_output" | "custom_tool_call_output" => {
+                        let call_id = payload
+                            .get("call_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        let name = call_id.as_ref().and_then(|id| call_names.get(id)).cloned();
+                        let output = payload.get("output").unwrap_or(&Value::Null);
+                        let content = output
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| extract_text(output));
+                        let mut message = SessionMessage::structured(
+                            "tool".to_string(),
+                            "function_call_output",
+                            name,
+                            call_id,
+                            content,
+                            ts,
+                        );
+                        message.is_error =
+                            payload.get("is_error").and_then(Value::as_bool) == Some(true);
+                        parsed.messages.push(message);
+                    }
+                    "agent_message" => {}
+                    _ => parsed.unknown_records = parsed.unknown_records.saturating_add(1),
                 }
-
-                messages.push(SessionMessage::structured(
-                    "tool".to_string(),
-                    "function_call_output",
-                    name,
-                    call_id,
-                    content,
-                    ts,
-                ));
             }
-            _ => {}
+            "event_msg" => match payload.get("type").and_then(Value::as_str) {
+                Some("token_count") => {
+                    parsed.tokens_used = payload
+                        .pointer("/info/total_token_usage/total_tokens")
+                        .and_then(Value::as_i64)
+                        .or(parsed.tokens_used);
+                }
+                Some("user_message") | Some("agent_message") => {
+                    let role =
+                        if payload.get("type").and_then(Value::as_str) == Some("user_message") {
+                            "user"
+                        } else {
+                            "assistant"
+                        };
+                    if let Some(content) = payload.get("message").and_then(Value::as_str) {
+                        let content = if role == "user" {
+                            clean_user_message_text(content)
+                        } else {
+                            content.trim().to_string()
+                        };
+                        if !content.is_empty() {
+                            event_fallback.push(SessionMessage::plain(
+                                role.to_string(),
+                                content,
+                                ts,
+                            ));
+                        }
+                    }
+                }
+                Some("item_completed") | Some("turn_started") | Some("turn_complete") => {}
+                _ => {}
+            },
+            "token_usage_record" | "world_state" | "inter_agent_communication_metadata" => {}
+            _ => parsed.unknown_records = parsed.unknown_records.saturating_add(1),
         }
     }
 
-    Ok(messages)
+    if parsed.messages.is_empty() {
+        parsed.messages = event_fallback;
+    }
+    Ok(parsed)
+}
+
+fn open_rollout(path: &Path) -> Result<Box<dyn BufRead>, String> {
+    let file = File::open(path).map_err(|e| format!("Failed to open Codex rollout: {e}"))?;
+    if path.extension().and_then(|value| value.to_str()) == Some("zst") {
+        let decoder = zstd::stream::read::Decoder::new(file)
+            .map_err(|e| format!("Failed to decode Codex rollout: {e}"))?;
+        Ok(Box::new(BufReader::with_capacity(1 << 20, decoder)))
+    } else {
+        Ok(Box::new(BufReader::with_capacity(1 << 20, file)))
+    }
+}
+
+fn read_first_value(path: &Path) -> Option<Value> {
+    let mut reader = open_rollout(path).ok()?;
+    let mut line = String::with_capacity(1 << 16);
+    reader.read_line(&mut line).ok()?;
+    serde_json::from_str(&line).ok()
+}
+
+#[derive(Debug)]
+enum ThreadDisposition {
+    User,
+    Internal,
+    Spawned(Option<String>),
+}
+
+fn thread_disposition(payload: &Value) -> ThreadDisposition {
+    if let Some(source) = payload.get("source").filter(|source| source.is_object()) {
+        if source.pointer("/subagent/thread_spawn").is_some() {
+            let parent = source
+                .pointer("/subagent/parent_thread_id")
+                .or_else(|| source.pointer("/subagent/thread_spawn/parent_thread_id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            return ThreadDisposition::Spawned(parent);
+        }
+        return ThreadDisposition::Internal;
+    }
+    if matches!(
+        payload.get("thread_source").and_then(Value::as_str),
+        Some("subagent" | "guardian_review" | "memory_consolidation")
+    ) {
+        return ThreadDisposition::Internal;
+    }
+    ThreadDisposition::User
+}
+
+fn timestamp_ms(value: &Value) -> Option<i64> {
+    parse_timestamp_to_ms(value).or_else(|| {
+        value.as_i64().map(|raw| {
+            if raw > 10_000_000_000 {
+                raw
+            } else {
+                raw * 1000
+            }
+        })
+    })
 }
 
 fn extract_message_content(content: Option<&Value>, role: &str) -> String {
@@ -250,13 +514,27 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         ));
     }
 
-    std::fs::remove_file(path).map_err(|e| {
+    let sibling = if path.to_string_lossy().ends_with(".jsonl.zst") {
+        path.to_string_lossy()
+            .strip_suffix(".zst")
+            .map(PathBuf::from)
+    } else {
+        Some(PathBuf::from(format!("{}.zst", path.to_string_lossy())))
+    };
+    fs::remove_file(path).map_err(|e| {
         format!(
             "Failed to delete Codex session file {}: {e}",
             path.display()
         )
     })?;
-
+    if let Some(sibling) = sibling.filter(|candidate| candidate.is_file()) {
+        fs::remove_file(&sibling).map_err(|e| {
+            format!(
+                "Failed to delete Codex session copy {}: {e}",
+                sibling.display()
+            )
+        })?;
+    }
     Ok(true)
 }
 
@@ -265,111 +543,161 @@ fn parse_session(
     title_index: &HashMap<String, String>,
     history_title_index: &HashMap<String, String>,
 ) -> Option<SessionMeta> {
-    let (head, tail) = read_head_tail_lines(path, 40, 30).ok()?;
+    parse_session_with_state(path, title_index, history_title_index, None, false)
+}
 
-    let mut session_id: Option<String> = None;
-    let mut project_dir: Option<String> = None;
-    let mut model: Option<String> = None;
-    let mut created_at: Option<i64> = None;
-    let mut fallback_title: Option<String> = None;
-
-    // Extract metadata from head lines
-    for line in &head {
-        let value: Value = match serde_json::from_str(line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-        if created_at.is_none() {
-            created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+fn parse_session_with_state(
+    path: &Path,
+    title_index: &HashMap<String, String>,
+    history_title_index: &HashMap<String, String>,
+    state: Option<&StateRow>,
+    archived_by_path: bool,
+) -> Option<SessionMeta> {
+    let parsed = if state.is_some() {
+        let head = read_first_value(path);
+        let payload = head.as_ref().and_then(|value| value.get("payload"));
+        let disposition = payload
+            .map(thread_disposition)
+            .unwrap_or(ThreadDisposition::User);
+        let spawned = matches!(&disposition, ThreadDisposition::Spawned(_));
+        let internal = matches!(&disposition, ThreadDisposition::Internal);
+        RolloutParse {
+            session_id: payload
+                .and_then(|value| value.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            cwd: payload
+                .and_then(|value| value.get("cwd"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            parent_session_id: match &disposition {
+                ThreadDisposition::Spawned(parent) => parent.clone(),
+                _ => None,
+            },
+            spawned,
+            internal,
+            ..RolloutParse::default()
         }
-        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
-            if let Some(payload) = value.get("payload") {
-                if session_id.is_none() {
-                    session_id = payload
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(|s| s.to_string());
-                }
-                if project_dir.is_none() {
-                    project_dir = payload
-                        .get("cwd")
-                        .and_then(Value::as_str)
-                        .map(|s| s.to_string());
-                }
-                if model.is_none() {
-                    model = payload
-                        .get("model")
-                        .and_then(Value::as_str)
-                        .or_else(|| payload.get("model_slug").and_then(Value::as_str))
-                        .map(|s| s.to_string());
-                }
-                if let Some(ts) = payload.get("timestamp").and_then(parse_timestamp_to_ms) {
-                    created_at.get_or_insert(ts);
-                }
-            }
-        }
-        if fallback_title.is_none() {
-            fallback_title = extract_first_user_title(&value);
-        }
+    } else {
+        parse_rollout(path).ok()?
+    };
+    if parsed.internal {
+        return None;
     }
 
-    // Extract last_active_at and summary from tail lines (reverse order)
-    let mut last_active_at: Option<i64> = None;
-    let mut summary: Option<String> = None;
-
-    for line in tail.iter().rev() {
-        let value: Value = match serde_json::from_str(line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-        if last_active_at.is_none() {
-            last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        }
-        if summary.is_none() && value.get("type").and_then(Value::as_str) == Some("response_item") {
-            if let Some(payload) = value.get("payload") {
-                if payload.get("type").and_then(Value::as_str) == Some("message") {
-                    let text = payload.get("content").map(extract_text).unwrap_or_default();
-                    if !text.trim().is_empty() {
-                        summary = Some(text);
-                    }
-                }
-            }
-        }
-        if last_active_at.is_some() && summary.is_some() {
-            break;
-        }
-    }
-
-    let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
-    let session_id = session_id?;
-
-    let title = title_index
-        .get(&session_id)
-        .cloned()
+    let session_id = state
+        .map(|row| row.id.clone())
+        .filter(|id| !id.is_empty())
+        .or(parsed.session_id)
+        .or_else(|| infer_session_id_from_filename(path))?;
+    let project_dir = state.and_then(|row| row.cwd.clone()).or(parsed.cwd);
+    let title = state
+        .and_then(|row| row.title.clone())
+        .and_then(|value| normalize_codex_title_value(&value))
+        .or_else(|| title_index.get(&session_id).cloned())
         .or_else(|| history_title_index.get(&session_id).cloned())
-        .or(fallback_title)
-        .or_else(|| {
-            project_dir
-                .as_deref()
-                .and_then(path_basename)
-                .map(|value| value.to_string())
-        });
-
-    let summary = summary.map(|text| truncate_summary(&text, 160));
+        .or(parsed.title)
+        .or_else(|| project_dir.as_deref().and_then(path_basename));
+    let metadata = fs::metadata(path).ok();
+    let source_mtime = metadata.as_ref().and_then(file_mtime_ms);
+    let source_size = metadata
+        .as_ref()
+        .and_then(|value| i64::try_from(value.len()).ok());
+    let created_at = state.and_then(|row| row.created_at).or(parsed.created_at);
+    let last_active_at = state
+        .and_then(|row| row.updated_at)
+        .or(parsed.last_active_at)
+        .or(source_mtime);
+    let archived = state.map(|row| row.archived).unwrap_or(archived_by_path);
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
-        title,
-        summary,
+        title: title.clone(),
+        summary: parsed
+            .summary
+            .map(|text| truncate_summary(&text, 160))
+            .or(title),
         project_dir: project_dir.clone(),
-        cwd: project_dir.clone(),
-        model,
+        cwd: project_dir,
+        model: state.and_then(|row| row.model.clone()).or(parsed.model),
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("codex resume {session_id}")),
+        archived,
+        tokens_used: state.and_then(|row| row.tokens_used).or(parsed.tokens_used),
+        parent_session_id: parsed.parent_session_id,
+        unknown_records: parsed.unknown_records,
+        source_mtime,
+        source_size,
+        source_rank: if archived { 0 } else { 1 },
     })
+}
+
+fn codex_home(sessions_dir: &Path) -> PathBuf {
+    if sessions_dir.file_name().and_then(|value| value.to_str()) == Some("sessions") {
+        sessions_dir.parent().unwrap_or(sessions_dir).to_path_buf()
+    } else {
+        sessions_dir.to_path_buf()
+    }
+}
+
+fn load_state_index(path: &Path) -> HashMap<String, StateRow> {
+    let Ok(connection) = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return HashMap::new();
+    };
+    let Ok(mut statement) = connection.prepare(
+        "SELECT id, rollout_path, cwd, title, name, tokens_used, archived, model, created_at_ms, updated_at_ms FROM threads",
+    ) else {
+        return HashMap::new();
+    };
+    let Ok(rows) = statement.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let rollout_path: Option<String> = row.get(1)?;
+        let title: Option<String> = row.get(3)?;
+        let name: Option<String> = row.get(4)?;
+        Ok((
+            rollout_path,
+            StateRow {
+                id,
+                cwd: row.get(2)?,
+                title: name.filter(|value| !value.trim().is_empty()).or(title),
+                tokens_used: row.get(5)?,
+                archived: row.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
+                model: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            },
+        ))
+    }) else {
+        return HashMap::new();
+    };
+    let mut index = HashMap::new();
+    for (rollout_path, state) in rows.flatten() {
+        index.insert(state.id.clone(), state.clone());
+        if let Some(name) = rollout_path
+            .as_deref()
+            .and_then(|value| Path::new(value).file_name())
+            .and_then(|value| value.to_str())
+            .map(|value| value.strip_suffix(".zst").unwrap_or(value).to_string())
+        {
+            index.insert(name, state);
+        }
+    }
+    index
+}
+
+fn file_mtime_ms(metadata: &fs::Metadata) -> Option<i64> {
+    metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|value| i64::try_from(value.as_millis()).ok())
 }
 
 fn load_session_title_index(root: &Path) -> HashMap<String, String> {
@@ -433,45 +761,6 @@ fn load_history_title_index(root: &Path) -> HashMap<String, String> {
     }
 
     titles
-}
-
-fn extract_first_user_title(value: &Value) -> Option<String> {
-    if value.get("type").and_then(Value::as_str) != Some("response_item") {
-        return None;
-    }
-
-    let payload = value.get("payload")?;
-    if payload.get("type").and_then(Value::as_str) != Some("message") {
-        return None;
-    }
-    if payload.get("role").and_then(Value::as_str) != Some("user") {
-        return None;
-    }
-
-    payload.get("content").and_then(extract_first_content_title)
-}
-
-fn extract_first_content_title(content: &Value) -> Option<String> {
-    match content {
-        Value::String(text) => normalize_codex_title_value(text),
-        Value::Array(items) => items.iter().find_map(extract_first_content_title),
-        Value::Object(map) => map
-            .get("text")
-            .and_then(Value::as_str)
-            .and_then(normalize_codex_title_value)
-            .or_else(|| {
-                map.get("input_text")
-                    .and_then(Value::as_str)
-                    .and_then(normalize_codex_title_value)
-            })
-            .or_else(|| {
-                map.get("output_text")
-                    .and_then(Value::as_str)
-                    .and_then(normalize_codex_title_value)
-            })
-            .or_else(|| map.get("content").and_then(extract_first_content_title)),
-        _ => None,
-    }
 }
 
 fn normalize_codex_title_value(value: &str) -> Option<String> {
@@ -547,12 +836,18 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     UUID_RE.find(&file_name).map(|mat| mat.as_str().to_string())
 }
 
-fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
+fn rollout_file_name(path: &Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    let name = name.strip_suffix(".zst").unwrap_or(name);
+    name.ends_with(".jsonl").then_some(name)
+}
+
+fn collect_rollout_files(root: &Path, files: &mut Vec<PathBuf>) {
     if !root.exists() {
         return;
     }
 
-    let entries = match std::fs::read_dir(root) {
+    let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(err) => {
             log_scan_error(PROVIDER_ID, root, &err);
@@ -563,8 +858,8 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_jsonl_files(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            collect_rollout_files(&path, files);
+        } else if rollout_file_name(&path).is_some() {
             files.push(path);
         }
     }
@@ -812,5 +1107,56 @@ mod tests {
         let meta = parse_session(&path, &HashMap::new(), &HashMap::new()).expect("parse session");
 
         assert_eq!(meta.title.as_deref(), Some("code"));
+    }
+    #[test]
+    fn reads_compressed_rollout_extended_records_and_archived_state() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir
+            .path()
+            .join("rollout-2026-11-01T00-00-00-11111111-2222-4333-8444-555555555555.jsonl.zst");
+        let content = [
+            r#"{"timestamp":"2026-11-01T00:00:00Z","type":"session_meta","payload":{"id":"11111111-2222-4333-8444-555555555555","cwd":"/work"}}"#,
+            r#"{"timestamp":"2026-11-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.6"}}"#,
+            r#"{"timestamp":"2026-11-01T00:00:02Z","type":"response_item","payload":{"type":"reasoning","summary":[{"text":"inspect first"}]}}"#,
+            r#"{"timestamp":"2026-11-01T00:00:03Z","type":"response_item","payload":{"type":"local_shell_call","id":"call-1","action":{"command":"pwd"}}}"#,
+            r#"{"timestamp":"2026-11-01T00:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"/work"}}"#,
+            r#"{"timestamp":"2026-11-01T00:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":321}}}}"#,
+        ]
+        .join("\n");
+        let compressed = zstd::stream::encode_all(content.as_bytes(), 1).expect("compress fixture");
+        fs::write(&path, compressed).expect("write compressed rollout");
+
+        let messages = load_messages(&path).expect("load compressed rollout");
+        assert!(messages.iter().any(|message| message.kind == "thinking"));
+        assert!(messages
+            .iter()
+            .any(|message| message.kind == "function_call"));
+        assert!(messages
+            .iter()
+            .any(|message| message.kind == "function_call_output"));
+        assert!(messages
+            .iter()
+            .any(|message| message.model.as_deref() == Some("gpt-5.6")));
+
+        let meta = parse_session_with_state(&path, &HashMap::new(), &HashMap::new(), None, true)
+            .expect("parse archived compressed rollout");
+        assert!(meta.archived);
+        assert_eq!(meta.tokens_used, Some(321));
+    }
+
+    #[test]
+    fn classifies_internal_and_spawned_threads() {
+        let internal = serde_json::json!({"source":{"subagent":{"review":{}}}});
+        assert!(matches!(
+            thread_disposition(&internal),
+            ThreadDisposition::Internal
+        ));
+        let spawned = serde_json::json!({
+            "source":{"subagent":{"thread_spawn":{"agent_path":"/root/task"},"parent_thread_id":"parent-1"}}
+        });
+        assert!(matches!(
+            thread_disposition(&spawned),
+            ThreadDisposition::Spawned(Some(parent)) if parent == "parent-1"
+        ));
     }
 }
