@@ -85,8 +85,10 @@ const zh: Record<TranslationKey, string> = {
     'search.current_project': '当前项目',
     'search.all_projects': '全部项目',
     'search.no_results': '未找到结果',
+    'search.sort_by': '排序方式',
+    'search.scope': '搜索范围',
 
-    'index.title': '搜索索引',
+    'index.title': '设置',
     'index.overview': '概览',
     'index.indexed_sessions': '已索引会话',
     'index.provider_paths': 'Provider 路径',

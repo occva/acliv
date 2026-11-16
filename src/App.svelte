@@ -277,6 +277,9 @@
     if (s.projectDir && s.projectDir.trim()) return s.projectDir;
     return PROVIDER_GROUPS[s.providerId] ?? 'Unknown';
   }
+  function sessionWorkspaceDir(s?: SessionMeta | null): string {
+    return s?.cwd?.trim() || s?.projectDir?.trim() || '';
+  }
   function sessionCacheKey(s: SessionMeta): string {
     return `${s.providerId}:${s.sourcePath ?? s.sessionId}`;
   }
@@ -1615,9 +1618,10 @@
 
   async function handleProjectPathCopy(event?: MouseEvent) {
       event?.stopPropagation();
-      if (!selectedSession?.projectDir) return;
+      const workspaceDir = sessionWorkspaceDir(selectedSession);
+      if (!workspaceDir) return;
       isProjectMenuOpen = false;
-      await copyText(selectedSession.projectDir, keyMessage('toast.project_path_copied'));
+      await copyText(workspaceDir, keyMessage('toast.project_path_copied'));
   }
 
   async function openProjectInExplorer(event?: MouseEvent) {
@@ -1629,11 +1633,12 @@
       const target = currentConversation
           ? getSessionById(currentConversation.session_id, currentConversation.source_type)
           : null;
-      if (!target?.projectDir) return;
+      const workspaceDir = sessionWorkspaceDir(target);
+      if (!workspaceDir) return;
       isProjectMenuOpen = false;
 
       try {
-          await api.openInFileExplorer(target.projectDir);
+          await api.openInFileExplorer(workspaceDir);
           showFeedback(fileManagerOpenedMessage(), 'success');
       } catch (e) {
           console.error('Open in file manager failed:', e);
@@ -2682,8 +2687,8 @@
       if (searchQuery.trim()) void handleSearchInput();
   }
 
-  function toggleSearchProjectOnly() {
-      searchProjectOnly = !searchProjectOnly;
+  function setSearchProjectOnly(projectOnly: boolean) {
+      searchProjectOnly = projectOnly;
       if (searchQuery.trim()) void handleSearchInput();
   }
 
@@ -3134,6 +3139,12 @@
       aria-hidden="true"
   ></div>
   <aside class="sidebar" style={`width: ${sidebarWidth}px`}>
+    <div class="sidebar-project-toolbar">
+        <button class="sidebar-search-trigger" id="openSearchBtn" onclick={openSearch} type="button">
+            <span class="icon-inline" aria-hidden="true">{@html getIcon('search', 16)}</span>
+            <span>{t('search.placeholder')}</span>
+        </button>
+    </div>
     <div class="sidebar-content" id="projectsList">
         <div class="projects-list">
             {#each projects as project}
@@ -3231,6 +3242,30 @@
                     {/if}
                 {/if}
             </div>
+            <div class="provider-menu-tools">
+                <button
+                    class="provider-menu-tool"
+                    onclick={() => {
+                        closeSourceDropdown();
+                        void openIndexModal();
+                    }}
+                    type="button"
+                    role="menuitem"
+                >
+                    <span class="icon-inline" aria-hidden="true">{@html getIcon('database', 16)}</span>
+                    <span>{t('index.title')}</span>
+                </button>
+                <button class="provider-menu-tool" onclick={toggleTheme} type="button" role="menuitem">
+                    <span class="icon-inline" aria-hidden="true">
+                        {#if theme === 'light'}
+                            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z"></path></svg>
+                        {:else}
+                            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 12a4 4 0 100-8 4 4 0 000 8zM8 0a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 0zm0 13a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 13zM2.343 2.343a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L2.343 3.05a.5.5 0 010-.707zm11.314 8.486a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM12.914 2.343a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707L12.914 3.05a.5.5 0 010-.707zM3.05 12.207a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L3.05 12.914a.5.5 0 010-.707zM13 8a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2A.5.5 0 0113 8zM0 8a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2A.5.5 0 010 8z"></path></svg>
+                        {/if}
+                    </span>
+                    <span>{t('common.theme.toggle')}</span>
+                </button>
+            </div>
         </div>
 
         <button
@@ -3274,27 +3309,6 @@
 
   <main class="main-content">
      <div class="view" class:active={currentView === 'list'} id="listView">
-     <div class="view-header">
-             <h2>{currentProject || t('detail.select_project')}</h2>
-             {#if projects.length > 0 && currentProject}
-                <span class="view-info">{t('common.count.conversations', { count: conversations.length })}</span>
-             {/if}
-             <div class="view-header-actions">
-                 <button class="action-btn" id="openSearchBtn" onclick={openSearch} type="button">
-                    {@html getIcon('search', 16)}
-                 </button>
-                 <button class="action-btn index-toggle-btn" class:index-ready={searchIndexStatus?.ready} onclick={() => void openIndexModal()} type="button" title={t('index.title')}>
-                    {@html getIcon('database', 16)}
-                 </button>
-                 <button class="action-btn theme-toggle" id="themeToggle" onclick={toggleTheme} type="button" title={t('common.theme.toggle')}>
-                     {#if theme === 'light'}
-                       <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z"></path></svg>
-                     {:else}
-                       <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 12a4 4 0 100-8 4 4 0 000 8zM8 0a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 0zm0 13a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 13zM2.343 2.343a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L2.343 3.05a.5.5 0 010-.707zm11.314 8.486a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM12.914 2.343a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM3.05 12.207a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L3.05 12.914a.5.5 0 010-.707zM13 8a.5.5 0 01.5.5h2a.5.5 0 010-1h-2A.5.5 0 0113 8zM0 8a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2A.5.5 0 010 8z"></path></svg>
-                     {/if}
-                 </button>
-             </div>
-         </div>
          <div class="conversations-list" id="conversationsList">
             {#if conversations.length === 0}
                <div class="empty-state">
@@ -3344,16 +3358,6 @@
                      <button class="action-btn" onclick={openSearch} type="button">
                         {@html getIcon('search', 16)}
                      </button>
-                     <button class="action-btn index-toggle-btn" class:index-ready={searchIndexStatus?.ready} onclick={() => void openIndexModal()} type="button" title={t('index.title')}>
-                        {@html getIcon('database', 16)}
-                     </button>
-                     <button class="action-btn theme-toggle" onclick={toggleTheme} type="button" title={t('common.theme.toggle')}>
-                         {#if theme === 'light'}
-                           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786zm1.616 1.945a7 7 0 01-7.678 7.678 5.5 5.5 0 107.678-7.678z"></path></svg>
-                         {:else}
-                           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 12a4 4 0 100-8 4 4 0 000 8zM8 0a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 0zm0 13a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2A.5.5 0 018 13zM2.343 2.343a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L2.343 3.05a.5.5 0 010-.707zm11.314 8.486a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM12.914 2.343a.5.5 0 010 .707l-1.414 1.414a.5.5 0 01-.707-.707l1.414-1.414a.5.5 0 01.707 0zM3.05 12.207a.5.5 0 01.707 0l1.414 1.414a.5.5 0 01-.707.707L3.05 12.914a.5.5 0 010-.707zM13 8a.5.5 0 01.5.5h2a.5.5 0 010-1h-2A.5.5 0 0113 8zM0 8a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2A.5.5 0 010 8z"></path></svg>
-                         {/if}
-                    </button>
                     <button class="btn-danger" onclick={openDeleteDialog} type="button" disabled={isDeleting || !canDeleteSession(selectedSession)}>
                         <span class="icon-inline" aria-hidden="true">
                             {@html getIcon('trash', 15)}
@@ -3377,7 +3381,7 @@
                             <span>{@html getIcon('message', 12)} {t('common.id')}: {currentConversation.session_id}</span>
                         {/if}
                         <span>{@html getIcon('clock', 12)} {currentConversation.timestamp || t('common.na')}</span>
-                        {#if selectedSession?.projectDir}
+                        {#if sessionWorkspaceDir(selectedSession)}
                             <div class="menu-anchor project-menu-anchor">
                                 <button
                                     class="conversation-info-btn"
@@ -3388,7 +3392,7 @@
                                     <span class="icon-inline folder-info-icon" aria-hidden="true">
                                         {@html getIcon('folderOpen', 13)}
                                     </span>
-                                    <span>{baseName(selectedSession.projectDir)}</span>
+                                    <span>{baseName(sessionWorkspaceDir(selectedSession))}</span>
                                 </button>
                                 <div class="hover-menu" class:show-menu={isProjectMenuOpen}>
                                     <button type="button" onclick={handleProjectPathCopy}>
@@ -3716,16 +3720,29 @@
                           {t('search.type_to_search')}
                       {/if}
                   </span>
-                  <button class:active={searchSort === 'relevance'} class="filter-chip" type="button" onclick={() => setSearchSort('relevance')}>
-                      {t('search.relevance')}
-                  </button>
-                  <button class:active={searchSort === 'recent'} class="filter-chip" type="button" onclick={() => setSearchSort('recent')}>
-                      {t('search.recent')}
-                  </button>
+                  <label class="search-filter-select">
+                      <select
+                          aria-label={t('search.sort_by')}
+                          value={searchSort}
+                          onchange={(event) => setSearchSort(event.currentTarget.value as SearchSort)}
+                      >
+                          <option value="relevance">{t('search.relevance')}</option>
+                          <option value="recent">{t('search.recent')}</option>
+                      </select>
+                      <span class="search-filter-select-arrow" aria-hidden="true">{@html ICONS.dropdown_arrow}</span>
+                  </label>
                   {#if currentProject}
-                      <button class:active={searchProjectOnly} class="filter-chip" type="button" onclick={toggleSearchProjectOnly}>
-                          {searchProjectOnly ? t('search.current_project') : t('search.all_projects')}
-                      </button>
+                      <label class="search-filter-select">
+                          <select
+                              aria-label={t('search.scope')}
+                              value={searchProjectOnly ? 'current' : 'all'}
+                              onchange={(event) => setSearchProjectOnly(event.currentTarget.value === 'current')}
+                          >
+                              <option value="all">{t('search.all_projects')}</option>
+                              <option value="current">{t('search.current_project')}</option>
+                          </select>
+                          <span class="search-filter-select-arrow" aria-hidden="true">{@html ICONS.dropdown_arrow}</span>
+                      </label>
                   {/if}
               </div>
           </div>

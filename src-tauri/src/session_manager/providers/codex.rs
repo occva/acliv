@@ -404,6 +404,44 @@ fn thread_disposition(payload: &Value) -> ThreadDisposition {
     ThreadDisposition::User
 }
 
+fn is_codex_desktop_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+}
+
+fn codex_desktop_project_dir_under(cwd: &str, root: &Path) -> Option<String> {
+    let workspace = Path::new(cwd);
+    let date_dir = workspace.parent()?;
+    if date_dir.parent()? != root
+        || !is_codex_desktop_date(date_dir.file_name()?.to_str()?)
+        || workspace.file_name()?.is_empty()
+    {
+        return None;
+    }
+    Some(root.to_string_lossy().into_owned())
+}
+
+fn codex_desktop_paths_under(cwd: Option<String>, root: &Path) -> (Option<String>, Option<String>) {
+    let project_dir = cwd
+        .as_deref()
+        .and_then(|value| codex_desktop_project_dir_under(value, root))
+        .or_else(|| cwd.clone());
+    (project_dir, cwd)
+}
+
+fn codex_desktop_paths(cwd: Option<String>) -> (Option<String>, Option<String>) {
+    let Some(home) = dirs::home_dir() else {
+        return (cwd.clone(), cwd);
+    };
+    codex_desktop_paths_under(cwd, &home.join("Documents").join("Codex"))
+}
+
 fn timestamp_ms(value: &Value) -> Option<i64> {
     parse_timestamp_to_ms(value).or_else(|| {
         value.as_i64().map(|raw| {
@@ -590,14 +628,15 @@ fn parse_session_with_state(
         .filter(|id| !id.is_empty())
         .or(parsed.session_id)
         .or_else(|| infer_session_id_from_filename(path))?;
-    let project_dir = state.and_then(|row| row.cwd.clone()).or(parsed.cwd);
+    let (project_dir, cwd) =
+        codex_desktop_paths(state.and_then(|row| row.cwd.clone()).or(parsed.cwd));
     let title = state
         .and_then(|row| row.title.clone())
         .and_then(|value| normalize_codex_title_value(&value))
         .or_else(|| title_index.get(&session_id).cloned())
         .or_else(|| history_title_index.get(&session_id).cloned())
         .or(parsed.title)
-        .or_else(|| project_dir.as_deref().and_then(path_basename));
+        .or_else(|| cwd.as_deref().and_then(path_basename));
     let metadata = fs::metadata(path).ok();
     let source_mtime = metadata.as_ref().and_then(file_mtime_ms);
     let source_size = metadata
@@ -618,8 +657,8 @@ fn parse_session_with_state(
             .summary
             .map(|text| truncate_summary(&text, 160))
             .or(title),
-        project_dir: project_dir.clone(),
-        cwd: project_dir,
+        project_dir,
+        cwd,
         model: state.and_then(|row| row.model.clone()).or(parsed.model),
         created_at,
         last_active_at,
@@ -1107,6 +1146,30 @@ mod tests {
         let meta = parse_session(&path, &HashMap::new(), &HashMap::new()).expect("parse session");
 
         assert_eq!(meta.title.as_deref(), Some("code"));
+    }
+
+    #[test]
+    fn groups_codex_desktop_workspaces_without_replacing_the_cwd() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("Documents").join("Codex");
+        let workspace = root.join("2026-06-26").join("ji");
+        let workspace_text = workspace.to_string_lossy().into_owned();
+
+        let (project_dir, cwd) = codex_desktop_paths_under(Some(workspace_text.clone()), &root);
+        assert_eq!(project_dir.as_deref(), root.to_str());
+        assert_eq!(cwd.as_deref(), Some(workspace_text.as_str()));
+
+        let regular_project = root.join("not-a-date").join("project");
+        let regular_text = regular_project.to_string_lossy().into_owned();
+        let (project_dir, cwd) = codex_desktop_paths_under(Some(regular_text.clone()), &root);
+        assert_eq!(project_dir.as_deref(), Some(regular_text.as_str()));
+        assert_eq!(cwd.as_deref(), Some(regular_text.as_str()));
+
+        let deleted_workspace = root.join("2026-07-08").join("deleted-workspace");
+        let deleted_text = deleted_workspace.to_string_lossy().into_owned();
+        let (project_dir, cwd) = codex_desktop_paths_under(Some(deleted_text.clone()), &root);
+        assert_eq!(project_dir.as_deref(), root.to_str());
+        assert_eq!(cwd.as_deref(), Some(deleted_text.as_str()));
     }
     #[test]
     fn reads_compressed_rollout_extended_records_and_archived_state() {

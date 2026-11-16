@@ -83,8 +83,10 @@ export const en = {
     'search.current_project': 'Current project',
     'search.all_projects': 'All projects',
     'search.no_results': 'No results found',
+    'search.sort_by': 'Sort by',
+    'search.scope': 'Search scope',
 
-    'index.title': 'Search Index',
+    'index.title': 'Settings',
     'index.overview': 'Overview',
     'index.indexed_sessions': 'Indexed Sessions',
     'index.provider_paths': 'Provider Paths',
