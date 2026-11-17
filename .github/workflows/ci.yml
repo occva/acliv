@@ -22,6 +22,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       desktop: ${{ steps.filter.outputs.desktop }}
       web: ${{ steps.filter.outputs.web }}
+      workflow: ${{ steps.filter.outputs.workflow }}
     steps:
       - name: Checkout for change detection
         uses: actions/checkout@v7
@@ -33,6 +34,8 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           filters: |
+            workflow:
+              - '.github/workflows/**'
             frontend:
               - 'package.json'
               - 'package-lock.json'
@@ -61,6 +64,25 @@ jobs:
               - 'src-tauri/src/session_manager/**'
               - 'src-tauri/src/search_index/**'
               - '.github/workflows/ci.yml'
+
+  workflow-lint:
+    name: Workflow lint
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          curl -fsSLo /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          /tmp/actionlint -color .github/workflows/*.yml
 
   frontend:
     name: Frontend checks
@@ -153,6 +175,7 @@ jobs:
       - frontend
       - rust-desktop
       - rust-web
+      - workflow-lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -160,9 +183,11 @@ jobs:
       FRONTEND_REQUIRED: ${{ needs.changes.outputs.frontend }}
       DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
       WEB_REQUIRED: ${{ needs.changes.outputs.web }}
+      WORKFLOW_REQUIRED: ${{ needs.changes.outputs.workflow }}
       FRONTEND_RESULT: ${{ needs.frontend.result }}
       DESKTOP_RESULT: ${{ needs.rust-desktop.result }}
       WEB_RESULT: ${{ needs.rust-web.result }}
+      WORKFLOW_RESULT: ${{ needs.workflow-lint.result }}
     steps:
       - name: Verify required jobs
         shell: bash
@@ -173,6 +198,7 @@ jobs:
             exit 1
           fi
           for check in \
+            "$WORKFLOW_REQUIRED:$WORKFLOW_RESULT:workflow" \
             "$FRONTEND_REQUIRED:$FRONTEND_RESULT:frontend" \
             "$DESKTOP_REQUIRED:$DESKTOP_RESULT:desktop" \
             "$WEB_REQUIRED:$WEB_RESULT:web"; do
@@ -182,4 +208,4 @@ jobs:
               exit 1
             fi
           done
-          echo "CI gate passed (frontend=$FRONTEND_REQUIRED, desktop=$DESKTOP_REQUIRED, web=$WEB_REQUIRED)."
+          echo "CI gate passed (workflow=$WORKFLOW_REQUIRED, frontend=$FRONTEND_REQUIRED, desktop=$DESKTOP_REQUIRED, web=$WEB_REQUIRED)."
