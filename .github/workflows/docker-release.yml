@@ -18,7 +18,10 @@ on:
       - "vite.config.ts"
       - "public/**"
       - "src/**"
-      - "src-tauri/**"
+      - "src-tauri/web/**"
+      - "src-tauri/src/paths.rs"
+      - "src-tauri/src/session_manager/**"
+      - "src-tauri/src/search_index/**"
   workflow_dispatch:
     inputs:
       version:
@@ -30,7 +33,6 @@ permissions:
   contents: read
   packages: write
 
-
 jobs:
   docker:
     if: github.ref_type != 'tag'
@@ -38,6 +40,7 @@ jobs:
       group: docker-build-${{ inputs.version || github.sha }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,12 +80,6 @@ jobs:
             tags="${image}:${version},${image}:${clean_version},${image}:latest"
             image_tag="${clean_version}"
             build_ref="$(git rev-parse HEAD)"
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            version="${GITHUB_REF#refs/tags/}"
-            clean_version="${version#v}"
-            tags="${image}:${version},${image}:${clean_version},${image}:latest"
-            image_tag="${clean_version}"
-            build_ref="${GITHUB_SHA}"
           else
             short_sha="${GITHUB_SHA::7}"
             tags="${image}:latest,${image}:sha-${short_sha}"
@@ -113,13 +110,11 @@ jobs:
     name: Publish Docker release tags
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     concurrency:
       group: docker-tags-${{ github.sha }}
       cancel-in-progress: false
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -130,28 +125,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare release image metadata
-        id: release
+      - name: Wait for the master image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="ghcr.io/occva/acliv:sha-${GITHUB_SHA::7}"
+          for _ in {1..120}; do
+            docker buildx imagetools inspect "$source" >/dev/null 2>&1 && exit 0
+            sleep 5
+          done
+          echo "Master image was not published for ${GITHUB_SHA}: ${source}" >&2
+          exit 1
+
+      - name: Publish version metadata layer
         shell: bash
         run: |
           set -euo pipefail
           image="ghcr.io/occva/acliv"
+          source="${image}:sha-${GITHUB_SHA::7}"
           version="${GITHUB_REF_NAME#v}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tags=${image}:${GITHUB_REF_NAME},${image}:${version},${image}:latest" >> "$GITHUB_OUTPUT"
-
-
-      - name: Build and publish Docker release image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.release.outputs.tags }}
-          build-args: |
-            ACLIV_IMAGE_TAG=${{ steps.release.outputs.version }}
-            ACLIV_BUILD_REF=${{ github.sha }}
-          cache-from: type=gha,scope=acliv-web
-          cache-to: type=gha,mode=max,scope=acliv-web
-          provenance: false
+          cat > /tmp/Dockerfile.release-metadata <<EOF
+          FROM ${source}
+          ENV ACLIV_IMAGE_TAG=${version}
+          EOF
+          docker buildx build \
+            --file /tmp/Dockerfile.release-metadata \
+            --platform linux/amd64 \
+            --provenance=false \
+            --push \
+            --tag "${image}:${GITHUB_REF_NAME}" \
+            --tag "${image}:${version}" \
+            --tag "${image}:latest" \
+            /tmp

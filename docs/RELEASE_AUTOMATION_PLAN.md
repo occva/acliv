@@ -111,12 +111,13 @@ macOS 使用原生 Bash 入口，不要求安装 PowerShell：
 职责固定为：
 
 - `release.yml`
-  - 由 `v*` tag 触发
-  - 构建桌面产物
-  - 上传 GitHub Release 资产
+  - `v*` tag 触发轻量转发 job
+  - 转发到 `master` 上下文的 `workflow_dispatch`，让 Windows/macOS Rust cache 能跨版本复用
+  - 从目标 tag checkout 源码并构建桌面产物
+  - 上传 GitHub Release 资产和 `latest.json`
 - `docker-release.yml`
-  - 继续负责 GHCR 镜像
-  - 与桌面 release 共用同一个 tag 版本号
+  - `master` 负责构建并推送 GHCR 镜像
+  - `v*` tag 只复用同提交的 master 镜像，增加版本元数据层并发布版本标签
 
 ## 4. 脚本接口定义
 
@@ -269,16 +270,17 @@ Git hooks 调用 Bash 检查脚本，因此 macOS 开发环境无需安装 Power
 
 触发：
 
-- `push tags: v*`
+- 推送 `v*` tag 时只运行轻量转发 job
+- 转发 job 通过 `workflow_dispatch` 在 `master` 上下文启动正式构建，并传入目标 tag
+- 手工演练可直接 dispatch，设置 `publish=false` 时只构建和上传临时 artifact，不覆盖 GitHub Release
 
 步骤固定为：
 
-1. `checkout`
-2. `setup node`
-3. `setup rust`
-4. 运行发布级检查
-5. 构建桌面端产物
-6. 上传 GitHub Release 资产
+1. 校验目标 tag 对应提交的 master CI 已通过
+2. 从目标 tag checkout 源码
+3. setup-node / setup-rust 并恢复默认分支作用域缓存
+4. Windows、macOS x64、macOS arm64 并行构建桌面产物
+5. 汇总产物、生成 `latest.json` 并上传 GitHub Release
 
 release body 来源：
 

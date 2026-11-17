@@ -120,6 +120,5 @@ Invoke-Step -Name 'create release tag' -Action {
 Invoke-Step -Name 'push release tag' -Action {
   git push origin $tag
 }
-
 Write-Host "Release tag pushed: $tag" -ForegroundColor Green
 Write-Host "GitHub Actions will build and upload all desktop release assets." -ForegroundColor Green

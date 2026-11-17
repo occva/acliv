@@ -36,7 +36,10 @@ RUN --mount=type=cache,id=acliv-cargo-registry,target=/root/.cargo/registry,shar
     --mount=type=cache,id=acliv-cargo-git,target=/root/.cargo/git,sharing=locked \
     sh -ec 'mkdir -p src-tauri/web/src && printf "fn main() {}\n" > src-tauri/web/src/main.rs && cargo build --locked --release --manifest-path src-tauri/web/Cargo.toml && rm -f src-tauri/web/src/main.rs'
 
-COPY src-tauri ./src-tauri
+COPY src-tauri/web ./src-tauri/web
+COPY src-tauri/src/paths.rs ./src-tauri/src/paths.rs
+COPY src-tauri/src/session_manager ./src-tauri/src/session_manager
+COPY src-tauri/src/search_index ./src-tauri/src/search_index
 RUN --mount=type=cache,id=acliv-cargo-registry,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,id=acliv-cargo-git,target=/root/.cargo/git,sharing=locked <<'EOF'
 set -eu

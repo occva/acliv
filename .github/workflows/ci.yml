@@ -16,32 +16,58 @@ concurrency:
 
 jobs:
   changes:
-    name: Detect code changes
+    name: Detect required checks
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.filter.outputs.code }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      web: ${{ steps.filter.outputs.web }}
     steps:
       - name: Checkout for change detection
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Detect code changes
+      - name: Detect required checks
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          predicate-quantifier: every
           filters: |
-            code:
-              - '**'
-              - '!**/*.md'
-              - '!docs/**'
-              - '!assets/screenshots/**'
+            frontend:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'index.html'
+              - 'svelte.config.js'
+              - 'tsconfig.json'
+              - 'vite.config.ts'
+              - 'public/**'
+              - 'src/**'
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+            desktop:
+              - 'src-tauri/Cargo.toml'
+              - 'src-tauri/Cargo.lock'
+              - 'src-tauri/build.rs'
+              - 'src-tauri/tauri.conf.json'
+              - 'src-tauri/capabilities/**'
+              - 'src-tauri/gen/**'
+              - 'src-tauri/src/**'
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+            web:
+              - 'scripts/**'
+              - 'src-tauri/web/**'
+              - 'src-tauri/src/paths.rs'
+              - 'src-tauri/src/session_manager/**'
+              - 'src-tauri/src/search_index/**'
+              - '.github/workflows/ci.yml'
+
   frontend:
     name: Frontend checks
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,8 +91,9 @@ jobs:
   rust-desktop:
     name: Desktop Rust checks
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,8 +125,9 @@ jobs:
   rust-web:
     name: Web Rust checks
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,9 +154,12 @@ jobs:
       - rust-desktop
       - rust-web
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
-      CODE_CHANGED: ${{ needs.changes.outputs.code }}
       CHANGES_RESULT: ${{ needs.changes.result }}
+      FRONTEND_REQUIRED: ${{ needs.changes.outputs.frontend }}
+      DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
+      WEB_REQUIRED: ${{ needs.changes.outputs.web }}
       FRONTEND_RESULT: ${{ needs.frontend.result }}
       DESKTOP_RESULT: ${{ needs.rust-desktop.result }}
       WEB_RESULT: ${{ needs.rust-web.result }}
@@ -141,12 +172,14 @@ jobs:
             echo "Change detection failed: $CHANGES_RESULT" >&2
             exit 1
           fi
-          if [[ "$CODE_CHANGED" == "true" ]]; then
-            for result in "$FRONTEND_RESULT" "$DESKTOP_RESULT" "$WEB_RESULT"; do
-              if [[ "$result" != "success" ]]; then
-                echo "A required CI job did not succeed: $result" >&2
-                exit 1
-              fi
-            done
-          fi
-          echo "CI gate passed (code changed: $CODE_CHANGED)."
+          for check in \
+            "$FRONTEND_REQUIRED:$FRONTEND_RESULT:frontend" \
+            "$DESKTOP_REQUIRED:$DESKTOP_RESULT:desktop" \
+            "$WEB_REQUIRED:$WEB_RESULT:web"; do
+            IFS=: read -r required result name <<< "$check"
+            if [[ "$required" == "true" && "$result" != "success" ]]; then
+              echo "Required $name job did not succeed: $result" >&2
+              exit 1
+            fi
+          done
+          echo "CI gate passed (frontend=$FRONTEND_REQUIRED, desktop=$DESKTOP_REQUIRED, web=$WEB_REQUIRED)."
