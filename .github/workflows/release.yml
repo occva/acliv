@@ -83,13 +83,13 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -145,7 +145,7 @@ jobs:
         run: ./scripts/assert-release-notes.ps1 -Path release/v${{ steps.version.outputs.version }}/release-notes-v${{ steps.version.outputs.version }}.md
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: release/v${{ steps.version.outputs.version }}/*
@@ -171,13 +171,13 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -245,7 +245,7 @@ jobs:
           cp "$tar_path.sig" "$release_dir/acliv-v${version}-macos-${{ matrix.arch }}.tar.gz.sig"
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-${{ matrix.arch }}
           path: release/v${{ steps.version.outputs.version }}/*
@@ -271,7 +271,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release/v${{ steps.version.outputs.version }}
@@ -321,7 +321,7 @@ jobs:
           jq empty "$ASSETS/latest.json"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
