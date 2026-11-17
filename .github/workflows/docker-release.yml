@@ -86,10 +86,12 @@ jobs:
             image_tag="sha-${short_sha}"
             build_ref="${GITHUB_SHA}"
           fi
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "build_ref=${build_ref}" >> "$GITHUB_OUTPUT"
+          {
+            echo "image=${image}"
+            echo "tags=${tags}"
+            echo "image_tag=${image_tag}"
+            echo "build_ref=${build_ref}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         uses: docker/build-push-action@v7
